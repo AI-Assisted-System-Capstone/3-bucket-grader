@@ -110,8 +110,13 @@ test set, missing 14). Still plain argmax — no threshold tuning applied yet.
       precision.
 - [ ] **Threshold vs. argmax**: build a threshold sweep (sensitivity/precision vs.
       threshold) before picking a low cutoff for high-sensitivity behavior.
-- [ ] **~249 harm reports currently misclassified as `none`** — need targeted error
-      analysis on these false negatives to find patterns.
+- [x] ~~**~249 harm reports currently misclassified as `none`**~~ — done. Found 242
+      false negatives (236 `some`, 6 `serious`) in the test set. Key finding: many
+      of these narratives explicitly downplay harm ("no harm noted", "no adverse
+      events reported") despite the official harm grade saying otherwise — a
+      possible narrative/label mismatch worth raising with the sponsor. Not a
+      short-text problem (FNs are *longer* on average). Mostly confident misses,
+      not borderline (only 15% are "near misses" a lower threshold would fix).
 - [ ] **Column scope**: currently only 3 of 23 columns are used. Sponsor wants to
       keep the medication column (drug prescribed/administered) in for **semantic
       clustering** — to check whether a department is over-ordering or
