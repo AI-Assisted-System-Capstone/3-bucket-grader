@@ -43,6 +43,22 @@ BUCKET_MAP = {
 }
 
 TEXT_COLS = ["event_comments", "manager_comments", "unit_actions_taken"]
+TEXT_COL_LABELS = {
+    "event_comments": "Event Comments",
+    "manager_comments": "Manager Comments",
+    "unit_actions_taken": "Unit Actions Taken",
+}
+
+
+def build_labeled_text(df):
+    labeled_parts = []
+    for col in TEXT_COLS:
+        series = df[col].fillna("").astype(str).str.strip()
+        prefix = TEXT_COL_LABELS[col] + ": "
+        labeled_parts.append((prefix + series).where(series != "", ""))
+    return pd.concat(labeled_parts, axis=1).agg(" ".join, axis=1).str.replace(
+        r"\s+", " ", regex=True
+    ).str.strip()
 
 
 def main():
@@ -50,7 +66,7 @@ def main():
     df = df[df[HARM_COL].notna()].copy()
     df["bucket"] = df[HARM_COL].map(BUCKET_MAP)
     df = df[df["bucket"].notna()].copy()
-    df["text"] = df[TEXT_COLS].fillna("").agg(" ".join, axis=1).str.strip()
+    df["text"] = build_labeled_text(df)
     df = df[df["text"].str.len() > 0].copy()
 
     # SAME split as baseline_grader.py (same random_state=42) for a fair comparison.
