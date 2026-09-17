@@ -34,9 +34,12 @@ Of the 23 columns, only 3 free-text fields are currently used as model input:
 - `manager_comments`
 - `unit_actions_taken`
 
-These are concatenated into a single text blob per report. (`shareable_lessons` and
-the medication columns, e.g. `ME - Prescribed - Name`, `ADR - Suspect Med Name`, are
-not yet used — see To-Dos.)
+Each field is prefixed with its own label before being joined into a single text
+blob per report (e.g. `Event Comments: ... Manager Comments: ... Unit Actions
+Taken: ...`), so the model can tell which field a phrase came from instead of
+seeing one undifferentiated bag of words. (`shareable_lessons` and the medication
+columns, e.g. `ME - Prescribed - Name`, `ADR - Suspect Med Name`, are not yet
+used — see To-Dos.)
 
 ## Tokenize
 
@@ -53,8 +56,8 @@ Two models exist so far:
    with `class_weight="balanced"` to counter the severe class imbalance.
 2. **DistilBERT** (`distilbert-base-uncased`): 6 transformer layers, ~66M parameters —
    a small model, fine-tuned on the same 3-bucket task and same train/test split as
-   the baseline, with class-weighted cross-entropy loss. Not yet run on the full
-   dataset locally (needs `torch`/`transformers`, availability unconfirmed).
+   the baseline, with class-weighted cross-entropy loss. Run on the full 80k dataset
+   (3 epochs, ~33 min on Apple Silicon MPS) — see Results below.
 
 **To-do:** find a better model than DistilBERT — it's a small model and this task
 needs high sensitivity; something with more capacity may be worth the added
@@ -87,13 +90,24 @@ Top words pushing predictions toward `serious`: *died, permanent, urgent, death,
 critical, life threatening, neurological* — semantically sensible, not spurious
 correlations.
 
-**DistilBERT**: not yet run on the full dataset locally.
+**DistilBERT** (with labeled text fields): 97% accuracy, 89% macro F1.
+
+| Bucket | Precision | Recall |
+|---|---|---|
+| `none` | 0.98 | 0.98 |
+| `some` | 0.86 | 0.85 |
+| `serious` | 0.87 | 0.82 |
+
+Beats the TF-IDF baseline on every metric that matters, especially the sponsor's
+priority: `serious` recall 0.76 → 0.82 (catches 65/79 true serious cases in the
+test set, missing 14). Still plain argmax — no threshold tuning applied yet.
 
 ## Open questions / To-Dos
 
-- [ ] **High sensitivity is a hard requirement** (sponsor). Current `serious` recall
-      is 0.76 — misses about 1 in 4 true serious cases. Needs to go up, even at the
-      cost of precision.
+- [ ] **High sensitivity is a hard requirement** (sponsor). Current best (DistilBERT)
+      `serious` recall is 0.82 — up from the TF-IDF baseline's 0.76, but still misses
+      about 1 in 5 true serious cases. Needs to go up further, even at the cost of
+      precision.
 - [ ] **Threshold vs. argmax**: build a threshold sweep (sensitivity/precision vs.
       threshold) before picking a low cutoff for high-sensitivity behavior.
 - [ ] **~249 harm reports currently misclassified as `none`** — need targeted error
@@ -103,9 +117,8 @@ correlations.
       clustering** — to check whether a department is over-ordering or
       over-prescribing a particular drug. Keep the rest lean; don't add columns
       just because they exist.
-- [ ] **Label the merged text fields**: `event_comments`, `manager_comments`, and
-      `unit_actions_taken` are currently concatenated with no field markers — add
-      labels/prefixes so the model can tell the fields apart.
+- [x] ~~**Label the merged text fields**~~ — done. Text fields are now prefixed
+      (`Event Comments: ...`, etc.) instead of blindly concatenated.
 - [ ] **Time-based validation**: current train/test split is random stratified. Need
       to re-run with a month-based split (e.g. Jan-Aug train / Sep val / Oct test)
       to see whether performance holds when predicting forward in time, not just on
