@@ -1,8 +1,10 @@
 # 3-Bucket Harm Severity Grader
 
-Classifies free-text safety incident reports into 3 harm severity buckets, collapsed
-from a 9-grade harm scale, so reviewers can triage the highest-risk reports faster
-than reading all of them manually.
+Classifies free-text safety incident reports by harm severity, on the full 10-grade
+PSRS scale (A through I), so reviewers can triage the highest-risk reports faster
+than reading all of them manually. The 3-bucket label (none/some/serious) and a
+binary triage score are both derived from the same 10-grade model, not trained
+separately.
 
 See [PIPELINE.md](PIPELINE.md) for how this pipeline works end to end (with
 diagrams), how it relates to the teammate's event-type pipeline, and the full
@@ -12,8 +14,9 @@ results for every model variant tried so far.
 
 The source dataset has 23 columns per report (event metadata, medication fields,
 location, and four free-text narrative fields). Of those, only one column drives the
-label: **Significance (PSRS Harm score)**, a 9-grade scale (A through I) collapsed
-into 3 buckets:
+label: **Significance (PSRS Harm score)**, a 10-grade scale (A, B1, B2, C, D, E, F, G,
+H, I). The production model trains directly on all 10 grades; the 3-bucket grouping
+below is a derived summary, not a separate label:
 
 | Bucket | Grades | Meaning |
 |---|---|---|
@@ -74,26 +77,38 @@ severe class imbalance. Full architecture, code, and how the letter grade,
 3-bucket label, and triage score are all derived from this one model:
 see `PIPELINE.md`.
 
-`baseline_grader.py` (3-bucket only) and `finetune_distilbert.py` (DistilBERT,
-also 3-bucket only) are earlier, superseded versions — kept for history, not
-run going forward. DistilBERT remains a candidate to swap in for TF-IDF
-*inside* `severity_model.py` if it's re-run on the 10-grade label and shown to
-beat these numbers; it hasn't been re-run since the leakage fix, so there's no
-current evidence either way.
+`baseline_grader.py` (3-bucket only) is an earlier, superseded version — kept
+for history, not run going forward. `finetune_distilbert.py` (DistilBERT,
+fine-tuned end-to-end on the 3-bucket label) **was re-run 2026-09-25** on the
+current leakage-safe pipeline: macro F1 0.79, beating the old 3-bucket
+baseline (0.77) but short of the current production model (0.82), with much
+better precision on the rare "serious" class (0.78 vs. 0.62) at the cost of
+recall (0.70 vs. 0.75). Not swapped in — this project prioritizes recall over
+precision on harmful classes — but it's a real, close result now, not an
+open question. See `PIPELINE.md` for the full breakdown.
 
 ## Classify
 
 **Done, 2026-09-24.** The triage cutoff is no longer plain argmax — it's
-picked on the validation set for the sponsor's stated ≥95% recall requirement,
-frozen, and applied unchanged to test (96.8% recall achieved there, at 27.5%
-precision — flagging about 1 in 6 reports). The raw score is also calibrated
-(Platt scaling) so it reads as an honest probability, not just a ranking
-signal, correcting for the training set's oversampled harm rate. Full numbers
-in `PIPELINE.md` under "Final, saved model."
+picked on the validation set for this project's own default target of ≥95%
+recall (not a documented sponsor requirement), frozen, and applied unchanged
+to test (96.0% recall achieved there, at 28.9% precision — flagging about 1
+in 6 reports). The raw score is also calibrated (Platt scaling) so it reads
+as an honest probability, not just a ranking signal, correcting for the
+training set's oversampled harm rate. Full numbers in `PIPELINE.md` under
+"Final, saved model," including the fuller operating-point menu (§14.2 in
+the Severity Model Reference doc) for the trade-off in catching every
+"serious" case specifically.
 
 ## Results
 
-### Current (as of 2026-09-22): leakage-safe fields, real time-based split (Oct test set)
+**For current numbers, see `PIPELINE.md`.** The section below is the original
+direct-3-bucket model (Branch 1) — superseded 2026-09-24 by the 10-grade
+production model in `severity_model.py`, whose derived 3-bucket macro F1 is
+0.82 (vs. 0.77 below). Kept here as the historical baseline everything else
+in this README and `PIPELINE.md` is compared against.
+
+### Historical (as of 2026-09-22): leakage-safe fields, real time-based split (Oct test set)
 
 Train = Jan-Aug (50,091 rows), validation = Sep (8,600), test = Oct (8,312) —
 the dataset's real time split, same rows the teammate's 11-buckets model uses,
@@ -116,9 +131,9 @@ live in the narrative itself, not in the post-investigation comments. Precision
 dropped (0.83 → 0.55 on `serious`), which is the honest cost of removing
 hindsight the model previously had access to.
 
-**DistilBERT**: not yet re-run on the fixed pipeline — `finetune_distilbert.py`
-is updated to use `data_pipeline.py` but takes ~30 min on this machine; run it
-next and update this table.
+**DistilBERT**, re-run 2026-09-25 on this same 3-bucket task and split: macro
+F1 0.79 (see "Model" above for the full breakdown vs. the current production
+model). Beats this table's 0.77 baseline; still not adopted.
 
 ### Combined multi-task experiment (2026-09-24) — tried, did not beat the baseline
 
@@ -138,8 +153,10 @@ leakage-safe / date-split data as everything else here.
 | `some` recall | 0.767 ± 0.038 | 0.762 ± 0.017 |
 | macro F1 | 0.451 ± 0.020 | 0.444 ± 0.005 |
 
-(Event-type accuracy 83.1% is a sanity check that the setup is correct — close
-to the teammate's own reported 87.3% on the same architecture/encoder.)
+(Event-type accuracy 83.1% is a sanity check that the setup is correct — a
+4-point gap from the teammate's reported 87.3% on the same architecture, not
+a match. Rerun 2026-09-25 with fresh, uncached embeddings to rule out a stale
+cache: identical result, so this gap is real, not an artifact.)
 
 **Two findings, both negative for this specific approach:**
 
@@ -148,9 +165,11 @@ to the teammate's own reported 87.3% on the same architecture/encoder.)
    seed-to-seed noise (±0.02). This replicates the teammate's own finding on
    their frozen-encoder hurt/not-hurt task ("a frozen encoder may simply not
    be able to make use of the clue") -- independently, on a different task.
-2. **The MiniLM multi-task setup underperforms the plain TF-IDF baseline by a
-   lot**: macro F1 0.45 here vs. 0.77 for TF-IDF + LogReg above, with
-   `serious` precision falling from 0.55 to 0.07-0.09. A frozen, generic
+2. **The MiniLM multi-task setup underperforms TF-IDF by a lot**: macro F1
+   0.45 here vs. 0.77 for the direct 3-bucket TF-IDF baseline above, or 0.82
+   for the current production model's derived 3-bucket output — an even
+   bigger gap against what's actually shipped. `serious` precision falls
+   from 0.55 to 0.07-0.09. A frozen, generic
    384-dim sentence embedding loses the sharp, low-frequency words ("died,"
    "permanent," "deceased") that a 20k-feature TF-IDF vector captures
    directly and that drive `serious` detection.
@@ -176,10 +195,12 @@ here only as a record of what changed, not as a result to compare against.
 
 ## Open questions / To-Dos
 
-- [ ] **High sensitivity is a hard requirement** (sponsor). Current best on the
-      leakage-safe pipeline (TF-IDF + LogReg) `serious` recall is 0.80 (16/20 test
-      cases caught). Needs to go up further, even at the cost of precision — and
-      needs re-checking once DistilBERT is re-run on the fixed pipeline.
+- [x] ~~**High sensitivity as this project's own default priority**~~ — addressed
+      via the calibrated triage score, not the raw `serious`-bucket argmax
+      (§8/§14.2 in the Severity Model Reference). Note: this was originally
+      logged as a documented sponsor requirement; it isn't one, it's this
+      project's own default target, corrected across several rounds of review
+      — see `PIPELINE.md`.
 - [x] ~~**~249 harm reports currently misclassified as `none`**~~ — done. Found 242
       false negatives (236 `some`, 6 `serious`) in the test set. Key finding: many
       of these narratives explicitly downplay harm ("no harm noted", "no adverse
@@ -208,19 +229,19 @@ here only as a record of what changed, not as a result to compare against.
       `baseline_grader.py` is superseded, kept for history only.
 - [x] ~~**Threshold vs. argmax**~~ — done, 2026-09-24, using the teammate's
       approach as the template: cutoff picked on validation for ≥95% recall
-      (the sponsor's stated requirement), frozen, applied to test (96.8%
-      recall achieved, 27.5% precision — the honest cost of that requirement).
-      Platt-scaled calibration added on top since training data oversamples
-      harm relative to validation/test. Details and numbers in `PIPELINE.md`.
-- [ ] **Re-run DistilBERT** on the fixed pipeline, now as a candidate to
-      replace TF-IDF inside `severity_model.py` (same threshold/calibration
-      wrapper either way) — not yet done, ~30 min run. TF-IDF is the current
-      production choice because it's already proven and fast; DistilBERT is
-      only worth swapping in if it clearly beats these numbers, not by
-      default. `finetune_distilbert.py` needs updating to train on
-      `full_label` (10-grade) instead of the retired 3-bucket `label` first.
-- [ ] **Verify `MAX_LENGTH=128`** against the actual token-length distribution of
-      the dataset instead of the current word-count guess.
+      (this project's own default target, not a documented sponsor
+      requirement), frozen, applied to test (96.0% recall achieved, 28.9%
+      precision — the honest cost of that target). Platt-scaled calibration
+      added on top since training data oversamples harm relative to
+      validation/test. Details and numbers in `PIPELINE.md`.
+- [x] ~~**Re-run DistilBERT**~~ — done, 2026-09-25. Macro F1 0.79 on the
+      3-bucket task, current leakage-safe pipeline: beats the old 0.77
+      baseline, short of production's 0.82, better "serious"-class precision
+      but worse recall. Not swapped in — see "Model" above for the full
+      trade-off and `PIPELINE.md` for the complete writeup.
+- [ ] **Verify `MAX_LENGTH=128`** against the actual token-length distribution
+      of the dataset instead of the current word-count guess — the 0.79
+      DistilBERT result above almost certainly undersells it if this is tuned.
 - [x] ~~**Combine with teammate's 11-buckets model (frozen-MiniLM version)**~~ —
       tried, 2026-09-24, did not beat the baseline. See "Combined multi-task
       experiment" above: event-type clue doesn't measurably help severity
@@ -231,3 +252,15 @@ here only as a record of what changed, not as a result to compare against.
       event-type and severity). The frozen-encoder version above was cheap to
       test but too weak on its own to tell whether the event-type clue would
       help a stronger model -- that question is still open.
+- [x] ~~**Is "Report Type" safe to pre-fill from a model?**~~ — confirmed
+      2026-09-25: no. It's assigned by the analyst/reviewer after review, not
+      the reporter at intake — same leakage pattern as `manager_comments`.
+      Removed from `prefill_extra_fields.py`'s modeled targets entirely. See
+      `PIPELINE.md` for the evidence (including the column's own
+      `Analyst-Report Type*` name) and the confirmation.
+- [x] ~~**Would more synthetic training data help the rare G/H/I grades?**~~ —
+      tried, 2026-09-25, no. 60 hand-written synthetic reports across 15
+      scenarios, added to training only: zero measurable effect on G/H/I
+      precision/recall. Traced why in `augment_rare_grades.py`/`PIPELINE.md`:
+      the synthetic examples' vocabulary doesn't overlap with the real missed
+      test cases' words at all.
