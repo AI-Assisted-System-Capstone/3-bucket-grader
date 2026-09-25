@@ -500,6 +500,47 @@ to match -- Report Type is now in the same excluded category as
 `manager_comments`/`unit_actions_taken`, just for the pre-fill task rather
 than the severity model's input.
 
+### DistilBERT and the MiniLM merge, actually re-run (2026-09-25)
+
+Both were flagged for a long time as "not yet re-run on the current pipeline"
+-- finally done, on the current leakage-safe, date-split data. Local
+environment needed `datasets` and `accelerate` installed (missing from the
+3.11 env; installed via pip, no other environment issues).
+
+**DistilBERT, fine-tuned end-to-end on the 3-bucket label** (`finetune_distilbert.py`,
+~44 min on Apple GPU/MPS): macro F1 **0.79** on the frozen October test set.
+
+| | none | some | serious |
+|---|---|---|---|
+| Precision | 0.99 | 0.55 | 0.78 |
+| Recall | 0.97 | 0.85 | 0.70 |
+
+This is a real, mixed result, not a clean win or a clean loss: it beats the
+old direct-3-bucket TF-IDF baseline (0.77) but falls short of the current
+production model's derived-3-bucket macro F1 (0.82). More interesting than
+the aggregate number is the trade: DistilBERT's precision on the rare
+"serious" class (0.78) is much better than production's (0.62), but its
+recall on that same class is lower (0.70 vs. 0.75), and its "some"-class
+precision is notably worse (0.55 vs. 0.76). Since this project's stated
+priority is recall over precision on the harmful classes, this trade cuts
+the wrong way to justify a swap -- but it's close enough, and different
+enough in shape, to be a real candidate, not a rejected one. **Caveat inherited
+from the original build, not newly introduced:** `MAX_LENGTH=128` was always
+a guess, never checked against this dataset's actual token-length
+distribution -- a properly tuned sequence length could move this number
+before any decision is made either way.
+
+**MiniLM multi-task merge**, rerun with fresh (not cached) embeddings:
+confirms the original rejection -- see the entry above this one. No change
+in conclusion, only in confidence (this run ruled out "the old number was
+just a stale-cache artifact").
+
+Not committed yet; `distilbert_output/` is gitignored (768MB of checkpoints)
+and `test_results.json` inside it is the only file worth keeping — not yet
+copied anywhere durable.
+
+---
+
 ## Event-type pipeline (teammate's `11-buckets` repo)
 
 ```mermaid
@@ -545,9 +586,21 @@ ballpark, approach clearly works in principle" is the accurate read, not
 
 We tried feeding Head A's category hint into a severity prediction directly
 (the same hint pattern, transplanted onto this repo's task). It made severity
-worse, not better — macro F1 dropped from 0.77 to 0.45, with no benefit from
-the hint. Full results: `combined_mtl_results.json`. The two pipelines stay
-separate because of this result, not by default.
+worse, not better. **Rerun 2026-09-25 with fresh embeddings on the current
+pipeline** (the previous number used an embedding cache older than the final
+`data_pipeline.py`; deleted and regenerated to be sure): event-type accuracy
+83.1% ± 0.6% (matches the earlier number, so the cache wasn't actually stale
+in a way that mattered), severity macro F1 **0.451 ± 0.020 with the
+event-type clue, 0.444 ± 0.005 without it** (3 seeds each) — confirms the
+clue barely helps, within noise, same conclusion as before.
+
+**The comparison that matters: 0.45 vs. the current production model's 0.82**
+(Branch 2's derived 3-bucket macro F1 -- see the "Final, saved model" table
+above), not the two-versions-ago 0.77 this section originally compared
+against. Now genuinely apples-to-apples: same test set, same current
+pipeline, both numbers real. The gap is enormous either way. Full results:
+`combined_mtl_results.json`. The two pipelines stay separate because of this
+result, not by default.
 
 ---
 
