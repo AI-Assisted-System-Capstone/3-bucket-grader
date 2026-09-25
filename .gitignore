@@ -4,3 +4,6 @@ LOCAL_ONLY*
 __pycache__/
 *.pyc
 .ipynb_checkpoints/
+_mtl_embed_*.npy
+severity_model/*.joblib
+distilbert_output/

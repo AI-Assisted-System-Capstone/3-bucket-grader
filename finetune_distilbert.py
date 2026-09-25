@@ -1,13 +1,16 @@
 """
 Step 2: a real context-aware model (DistilBERT) on the same 3-bucket task
-and the SAME train/test split as baseline_grader.py, for a fair comparison.
+and the SAME leakage-safe input / time-based split as baseline_grader.py,
+for a fair comparison. See data_pipeline.py for details on both fixes:
+manager_comments/unit_actions_taken are dropped (post-investigation leakage),
+and the split is the dataset's real Jan-Aug/Sep/Oct split, not a random one --
+matching the teammate's 11-buckets pipeline so results are comparable on the
+same test rows.
 """
 
 import json
 import numpy as np
-import pandas as pd
 import torch
-from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, confusion_matrix
 from datasets import Dataset
 from transformers import (
@@ -18,73 +21,20 @@ from transformers import (
     DataCollatorWithPadding,
 )
 
-DATA_PATH = "/Users/devanshigupta/Downloads/Capstone Engineering Files/LOCAL_ONLY_student_facing_candidate.parquet"
-HARM_COL = "Significance (PSRS Harm score)"
+from data_pipeline import train_val_test, LABELS, LABEL2ID
+
 OUT_DIR = "./distilbert_output"
 
 MODEL_NAME = "distilbert-base-uncased"
 MAX_LENGTH = 128  # a guess based on average narrative length -- NOT verified against
                    # the actual token-length distribution. See README "open questions".
-LABELS = ["none", "some", "serious"]
-LABEL2ID = {l: i for i, l in enumerate(LABELS)}
 ID2LABEL = {i: l for i, l in enumerate(LABELS)}
-
-BUCKET_MAP = {
-    "A-Unsafe Condition": "none",
-    "B1-Near Miss (by chance)": "none",
-    "B2-Near Miss (avoided)": "none",
-    "C-No Harm (no monitoring)": "none",
-    "D-No Harm (intervened)": "none",
-    "E-Harm-Temp (treated/intervened)": "some",
-    "F-Harm-Temp (add hospitalization)": "some",
-    "G-Harm-Permanent": "serious",
-    "H-Harm-Near Death": "serious",
-    "I-Harm-Death": "serious",
-}
-
-TEXT_COLS = ["event_comments", "manager_comments", "unit_actions_taken"]
-TEXT_COL_LABELS = {
-    "event_comments": "Event Comments",
-    "manager_comments": "Manager Comments",
-    "unit_actions_taken": "Unit Actions Taken",
-}
-
-
-def build_labeled_text(df):
-    labeled_parts = []
-    for col in TEXT_COLS:
-        series = df[col].fillna("").astype(str).str.strip()
-        prefix = TEXT_COL_LABELS[col] + ": "
-        labeled_parts.append((prefix + series).where(series != "", ""))
-    return pd.concat(labeled_parts, axis=1).agg(" ".join, axis=1).str.replace(
-        r"\s+", " ", regex=True
-    ).str.strip()
 
 
 def main():
-    df = pd.read_parquet(DATA_PATH)
-    df = df[df[HARM_COL].notna()].copy()
-    df["bucket"] = df[HARM_COL].map(BUCKET_MAP)
-    df = df[df["bucket"].notna()].copy()
-    df["text"] = build_labeled_text(df)
-    df = df[df["text"].str.len() > 0].copy()
-
-    # SAME split as baseline_grader.py (same random_state=42) for a fair comparison.
-    # NOTE: this is a random stratified split, NOT the time-based split
-    # (Jan-Aug train / Sep val / Oct test) the synthetic data was originally
-    # designed for -- see README "open questions" before trusting these numbers
-    # as a measure of true future generalization.
-    train_df, test_df = train_test_split(
-        df, test_size=0.2, random_state=42, stratify=df["bucket"]
-    )
-    train_df, val_df = train_test_split(
-        train_df, test_size=0.1, random_state=42, stratify=train_df["bucket"]
-    )
+    train_df, val_df, test_df = train_val_test()
 
     print("Train:", train_df.shape, "Val:", val_df.shape, "Test:", test_df.shape)
-
-    for split_df in (train_df, val_df, test_df):
-        split_df["label"] = split_df["bucket"].map(LABEL2ID)
 
     device = "mps" if torch.backends.mps.is_available() else "cpu"
     print("Using device:", device)

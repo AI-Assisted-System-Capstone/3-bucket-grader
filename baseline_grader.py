@@ -7,94 +7,59 @@ Collapses the 9 harm grades into 3 simple buckets:
   some    = E, F              (harm, treated)
   serious = G, H, I           (permanent harm / near death / death)
 
-Trains TF-IDF + Logistic Regression on the free-text narrative fields.
+Trains TF-IDF + Logistic Regression on `event_comments` plus a short intake-
+field prefix (unit, service, age, medications) -- NOT manager_comments or
+unit_actions_taken, which are filled in after a safety officer investigates
+and would leak the answer. Split is the dataset's real time-based split
+(Jan-Aug train / Sep validation / Oct test), not a random one, so results
+are comparable to the teammate's 11-buckets event-type/hurt model on the
+same rows. See data_pipeline.py for details.
 """
 
-import pandas as pd
-from sklearn.model_selection import train_test_split
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import classification_report, confusion_matrix
 from sklearn.dummy import DummyClassifier
 
-DATA_PATH = "/Users/devanshigupta/Downloads/Capstone Engineering Files/LOCAL_ONLY_student_facing_candidate.parquet"
-HARM_COL = "Significance (PSRS Harm score)"
-
-BUCKET_MAP = {
-    "A-Unsafe Condition": "none",
-    "B1-Near Miss (by chance)": "none",
-    "B2-Near Miss (avoided)": "none",
-    "C-No Harm (no monitoring)": "none",
-    "D-No Harm (intervened)": "none",
-    "E-Harm-Temp (treated/intervened)": "some",
-    "F-Harm-Temp (add hospitalization)": "some",
-    "G-Harm-Permanent": "serious",
-    "H-Harm-Near Death": "serious",
-    "I-Harm-Death": "serious",
-}
-
-TEXT_COLS = ["event_comments", "manager_comments", "unit_actions_taken"]
-TEXT_COL_LABELS = {
-    "event_comments": "Event Comments",
-    "manager_comments": "Manager Comments",
-    "unit_actions_taken": "Unit Actions Taken",
-}
-
-
-def build_labeled_text(df):
-    labeled_parts = []
-    for col in TEXT_COLS:
-        series = df[col].fillna("").astype(str).str.strip()
-        prefix = TEXT_COL_LABELS[col] + ": "
-        labeled_parts.append((prefix + series).where(series != "", ""))
-    return pd.concat(labeled_parts, axis=1).agg(" ".join, axis=1).str.replace(
-        r"\s+", " ", regex=True
-    ).str.strip()
+from data_pipeline import train_val_test, LABELS
 
 
 def main():
-    df = pd.read_parquet(DATA_PATH)
+    train_df, val_df, test_df = train_val_test()
+    print("Train:", train_df.shape, "Val:", val_df.shape, "Test:", test_df.shape)
+    print("\nTrain bucket distribution:")
+    print(train_df["bucket"].value_counts())
+    print(train_df["bucket"].value_counts(normalize=True).round(3))
 
-    df = df[df[HARM_COL].notna()].copy()
-    df["bucket"] = df[HARM_COL].map(BUCKET_MAP)
-    df = df[df["bucket"].notna()].copy()
-
-    df["text"] = build_labeled_text(df)
-    df = df[df["text"].str.len() > 0].copy()
-
-    print("Rows used:", len(df))
-    print("\nBucket distribution:")
-    print(df["bucket"].value_counts())
-    print(df["bucket"].value_counts(normalize=True).round(3))
-
-    X_train, X_test, y_train, y_test = train_test_split(
-        df["text"], df["bucket"], test_size=0.2, random_state=42, stratify=df["bucket"]
-    )
+    X_train, y_train = train_df["text"], train_df["bucket"]
+    X_val, y_val = val_df["text"], val_df["bucket"]
+    X_test, y_test = test_df["text"], test_df["bucket"]
 
     # --- Baseline: always guess the most common bucket ---
     dummy = DummyClassifier(strategy="most_frequent")
     dummy.fit(X_train, y_train)
-    dummy_preds = dummy.predict(X_test)
-    print("\n=== Dummy baseline (always guess most common) ===")
-    print(classification_report(y_test, dummy_preds, zero_division=0))
+    print("\n=== Dummy baseline (always guess most common), test set ===")
+    print(classification_report(y_test, dummy.predict(X_test), zero_division=0))
 
     # --- Simple model: word counts + logistic regression ---
     vectorizer = TfidfVectorizer(
         stop_words="english", max_features=20000, ngram_range=(1, 2), min_df=3
     )
     X_train_vec = vectorizer.fit_transform(X_train)
+    X_val_vec = vectorizer.transform(X_val)
     X_test_vec = vectorizer.transform(X_test)
 
-    clf = LogisticRegression(
-        max_iter=1000, class_weight="balanced", n_jobs=-1
-    )
+    clf = LogisticRegression(max_iter=1000, class_weight="balanced", n_jobs=-1)
     clf.fit(X_train_vec, y_train)
-    preds = clf.predict(X_test_vec)
 
-    print("\n=== TF-IDF + Logistic Regression ===")
-    print(classification_report(y_test, preds, zero_division=0))
-    print("Confusion matrix (rows=true, cols=pred), labels order:", sorted(y_test.unique()))
-    print(confusion_matrix(y_test, preds, labels=sorted(y_test.unique())))
+    print("\n=== TF-IDF + Logistic Regression, validation set (Sep) ===")
+    print(classification_report(y_val, clf.predict(X_val_vec), labels=LABELS, zero_division=0))
+
+    test_preds = clf.predict(X_test_vec)
+    print("\n=== TF-IDF + Logistic Regression, test set (Oct) ===")
+    print(classification_report(y_test, test_preds, labels=LABELS, zero_division=0))
+    print("Confusion matrix (rows=true, cols=pred), labels order:", LABELS)
+    print(confusion_matrix(y_test, test_preds, labels=LABELS))
 
     # --- Which words matter most for "serious" ---
     serious_idx = list(clf.classes_).index("serious")

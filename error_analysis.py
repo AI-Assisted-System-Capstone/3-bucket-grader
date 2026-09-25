@@ -2,70 +2,32 @@
 Error analysis: which true-harm reports (some/serious) does the DistilBERT
 model currently misclassify as "none", and is there a pattern?
 
-Reuses the exact same data prep and train/val/test split as
-finetune_distilbert.py (same random_state=42) so this analyzes the same
-held-out test set the reported metrics came from, then loads the trained
-checkpoint to get per-example predictions and probabilities.
+Reuses the same leakage-safe input / time-based split as finetune_distilbert.py
+(data_pipeline.py) so this analyzes the same held-out Oct test set the
+reported metrics came from, then loads the trained checkpoint to get
+per-example predictions and probabilities.
+
+NOTE: CHECKPOINT below must point at a checkpoint trained by the CURRENT
+finetune_distilbert.py (leakage-safe, date-split). Checkpoints trained
+before that fix used manager_comments/unit_actions_taken and a random split,
+and are not comparable to the test set built here.
 """
 
 import numpy as np
 import pandas as pd
 import torch
-from sklearn.model_selection import train_test_split
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
-DATA_PATH = "/Users/devanshigupta/Downloads/Capstone Engineering Files/LOCAL_ONLY_student_facing_candidate.parquet"
-HARM_COL = "Significance (PSRS Harm score)"
-CHECKPOINT = "./distilbert_output/checkpoint-3016"
+from data_pipeline import train_val_test, LABEL2ID, LABELS
 
-LABELS = ["none", "some", "serious"]
-LABEL2ID = {l: i for i, l in enumerate(LABELS)}
+CHECKPOINT = "./distilbert_output/checkpoint-3016"  # update after re-running finetune_distilbert.py
+
 ID2LABEL = {i: l for i, l in enumerate(LABELS)}
-
-BUCKET_MAP = {
-    "A-Unsafe Condition": "none",
-    "B1-Near Miss (by chance)": "none",
-    "B2-Near Miss (avoided)": "none",
-    "C-No Harm (no monitoring)": "none",
-    "D-No Harm (intervened)": "none",
-    "E-Harm-Temp (treated/intervened)": "some",
-    "F-Harm-Temp (add hospitalization)": "some",
-    "G-Harm-Permanent": "serious",
-    "H-Harm-Near Death": "serious",
-    "I-Harm-Death": "serious",
-}
-
-TEXT_COLS = ["event_comments", "manager_comments", "unit_actions_taken"]
-TEXT_COL_LABELS = {
-    "event_comments": "Event Comments",
-    "manager_comments": "Manager Comments",
-    "unit_actions_taken": "Unit Actions Taken",
-}
-
-
-def build_labeled_text(df):
-    labeled_parts = []
-    for col in TEXT_COLS:
-        series = df[col].fillna("").astype(str).str.strip()
-        prefix = TEXT_COL_LABELS[col] + ": "
-        labeled_parts.append((prefix + series).where(series != "", ""))
-    return pd.concat(labeled_parts, axis=1).agg(" ".join, axis=1).str.replace(
-        r"\s+", " ", regex=True
-    ).str.strip()
 
 
 def main():
-    df = pd.read_parquet(DATA_PATH)
-    df = df[df[HARM_COL].notna()].copy()
-    df["bucket"] = df[HARM_COL].map(BUCKET_MAP)
-    df = df[df["bucket"].notna()].copy()
-    df["text"] = build_labeled_text(df)
-    df = df[df["text"].str.len() > 0].copy()
-
-    # same split as finetune_distilbert.py / baseline_grader.py
-    train_df, test_df = train_test_split(
-        df, test_size=0.2, random_state=42, stratify=df["bucket"]
-    )
+    _, _, test_df = train_val_test()
+    test_df = test_df.copy()
 
     print("Test set size:", len(test_df))
 
@@ -110,12 +72,6 @@ def main():
     print(fn["prob_true_bucket"].describe())
     near_misses = (fn["prob_true_bucket"] > 0.3).sum()
     print(f"Near-misses (model gave true bucket >0.3 prob but argmax still picked none): {near_misses}")
-
-    print("\n--- Empty-field rates in false negatives vs. caught cases ---")
-    for col in TEXT_COLS:
-        fn_empty_rate = test_df.loc[fn.index, col].isna().mean()
-        caught_empty_rate = test_df.loc[caught.index, col].isna().mean()
-        print(f"  {col}: FN empty {fn_empty_rate:.1%}  |  caught empty {caught_empty_rate:.1%}")
 
     print("\n--- Sample false negatives (up to 15) ---")
     cols_to_show = ["bucket", "pred", "prob_none", "prob_some", "prob_serious", "word_count", "text"]

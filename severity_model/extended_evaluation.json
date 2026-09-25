@@ -1,0 +1,138 @@
+{
+  "sponsor_comparison": {
+    "at_0.96_specificity": {
+      "cutoff": 0.37303302271311256,
+      "sensitivity": 0.9032258064516129,
+      "specificity": 0.9599190795296497
+    },
+    "at_0.95_specificity": {
+      "cutoff": 0.3451643872787255,
+      "sensitivity": 0.9106699751861043,
+      "specificity": 0.9499304589707928
+    },
+    "auroc": 0.9860594786791566,
+    "auprc": 0.8705072097282427
+  },
+  "operating_point_menu": [
+    {
+      "volume_label": "sponsor-stated (200/day)",
+      "target_recall": 0.95,
+      "cutoff": 0.23611363921600065,
+      "test_recall": 0.9602977667493796,
+      "test_precision": 0.28880597014925374,
+      "flagged_per_period": 32.24254090471607,
+      "tp_per_period": 9.311838306063523,
+      "fp_per_period": 22.930702598652548,
+      "missed_some_per_period": 0.3368623676612127,
+      "missed_serious_per_period": 0.04812319538017324
+    },
+    {
+      "volume_label": "sponsor-stated (200/day)",
+      "target_recall": 0.9,
+      "cutoff": 0.34501199201684624,
+      "test_recall": 0.9106699751861043,
+      "test_precision": 0.48099606815203144,
+      "flagged_per_period": 18.35899903753609,
+      "tp_per_period": 8.830606352261789,
+      "fp_per_period": 9.528392685274301,
+      "missed_some_per_period": 0.7940327237728585,
+      "missed_serious_per_period": 0.07218479307025986
+    },
+    {
+      "volume_label": "sponsor-stated (200/day)",
+      "target_recall": 0.85,
+      "cutoff": 0.4308652036120619,
+      "test_recall": 0.8759305210918115,
+      "test_precision": 0.6128472222222222,
+      "flagged_per_period": 13.859480269489893,
+      "tp_per_period": 8.493743984600577,
+      "fp_per_period": 5.365736284889317,
+      "missed_some_per_period": 1.1308950914340712,
+      "missed_serious_per_period": 0.07218479307025986
+    },
+    {
+      "volume_label": "sponsor-stated (200/day)",
+      "target_recall": 0.8,
+      "cutoff": 0.5345392783841807,
+      "test_recall": 0.8238213399503722,
+      "test_precision": 0.7757009345794392,
+      "flagged_per_period": 10.298363811357074,
+      "tp_per_period": 7.988450433108758,
+      "fp_per_period": 2.3099133782483157,
+      "missed_some_per_period": 1.6361886429258903,
+      "missed_serious_per_period": 0.07218479307025986
+    },
+    {
+      "volume_label": "per 100 reports",
+      "target_recall": 0.95,
+      "cutoff": 0.23611363921600065,
+      "test_recall": 0.9602977667493796,
+      "test_precision": 0.28880597014925374,
+      "flagged_per_period": 16.121270452358036,
+      "tp_per_period": 4.655919153031761,
+      "fp_per_period": 11.465351299326274,
+      "missed_some_per_period": 0.16843118383060635,
+      "missed_serious_per_period": 0.02406159769008662
+    },
+    {
+      "volume_label": "per 100 reports",
+      "target_recall": 0.9,
+      "cutoff": 0.34501199201684624,
+      "test_recall": 0.9106699751861043,
+      "test_precision": 0.48099606815203144,
+      "flagged_per_period": 9.179499518768045,
+      "tp_per_period": 4.4153031761308945,
+      "fp_per_period": 4.764196342637151,
+      "missed_some_per_period": 0.39701636188642925,
+      "missed_serious_per_period": 0.03609239653512993
+    },
+    {
+      "volume_label": "per 100 reports",
+      "target_recall": 0.85,
+      "cutoff": 0.4308652036120619,
+      "test_recall": 0.8759305210918115,
+      "test_precision": 0.6128472222222222,
+      "flagged_per_period": 6.9297401347449465,
+      "tp_per_period": 4.246871992300289,
+      "fp_per_period": 2.6828681424446583,
+      "missed_some_per_period": 0.5654475457170356,
+      "missed_serious_per_period": 0.03609239653512993
+    },
+    {
+      "volume_label": "per 100 reports",
+      "target_recall": 0.8,
+      "cutoff": 0.5345392783841807,
+      "test_recall": 0.8238213399503722,
+      "test_precision": 0.7757009345794392,
+      "flagged_per_period": 5.149181905678537,
+      "tp_per_period": 3.994225216554379,
+      "fp_per_period": 1.1549566891241578,
+      "missed_some_per_period": 0.8180943214629451,
+      "missed_serious_per_period": 0.03609239653512993
+    }
+  ],
+  "recall_at_k_per_day": {
+    "20": 0.8928948622672325,
+    "50": 0.971497559243001
+  },
+  "prior_shift_correction": {
+    "correction_vector": [
+      0.6166500048965013,
+      0.10629573124990177,
+      0.11979481400829295,
+      0.06476361825771249,
+      0.05938983097525963,
+      -1.280989744493997,
+      -1.3499264705331653,
+      -0.43610792780439844,
+      -3.1140806736693314,
+      -1.005202459694365
+    ]
+  },
+  "macro_f1_grade": 0.589426167710565,
+  "macro_f1_bucket": 0.8209243043631321,
+  "not_addressed": {
+    "archetype_overlap": "No archetype/template ID column exists in this dataset. Needs sponsor-provided archetype IDs to check train/test template overlap.",
+    "sponsor_model_head_to_head": "The sponsor's actual training script has not been shared in this project. leakage_inflation_check.py measures a related but narrower question (effect of the leaky fields on a controlled architecture) -- it is not a substitute for the real comparison."
+  }
+}
