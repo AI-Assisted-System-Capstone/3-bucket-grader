@@ -610,5 +610,35 @@ Never inside a model — only in the final combined record per report:
 
 | | Severity (this repo) | Event type (teammate's repo) |
 |---|---|---|
-| Example report above | Grade F, hospitalization added | Fall, hurt = yes (91%) |
+| Example report above | Grade E, treated/intervened (61% triage score) | Fall, hurt = yes (91%) |
 | Feeds | Pre-fill + triage worklist | Recurring-theme tracking |
+
+---
+
+## The severity question is settled
+
+Both pipelines produce a hurt/not-hurt signal (this repo's triage score;
+the teammate's Head B, with the event-type hint). Same underlying question,
+directly comparable:
+
+| | This repo's model | Teammate's model (with hint) |
+|---|---|---|
+| Hurt PR-AUC | 0.871 | 0.472 |
+| Precision at ~95% recall | 28.9% | 8.1% |
+
+Not a close call. Use this repo's model for the harm-severity/triage
+requirement; there's no case for reviving the merged approach (see above)
+or switching architectures for this piece.
+
+## One open question worth raising with the sponsor: Event Type
+
+The sponsor's deck lists Event Type among the fields already provided to the
+Safety Officer at intake. If reporters fill it in themselves when they file
+the report, an 11-way classifier is predicting a field that already exists
+in the data — not filling a gap. The sponsor's actual stated requirement for
+this side of the project is multi-label **recurring themes** plus **trend
+tracking**, which is a different task than single-label event-type
+classification — it's closer to the clustering and theme-assignment work
+already sketched (`semantic_clustering.py`). Worth confirming directly with
+the sponsor whether Event Type is intake-filled before the teammate invests
+further in the 11-way classifier head.
