@@ -447,6 +447,59 @@ or synthetic-label noise (§14.2 again).
 Rejected, same treatment as the MiniLM merge and prior-shift correction
 experiments: a real result, documented, not deployed.
 
+### Report Type: found real evidence, not just a hypothesis (2026-09-25)
+
+The earlier finding (§14.7 in the Severity Model Reference) was "99.3%
+agreement with the hurt label, needs sponsor confirmation whether it's set
+at intake or after review." Two things found by looking directly at the
+dataset's own columns and values push this further, though sponsor
+confirmation is still the only way to fully close it:
+
+- **The column is literally named `Analyst-Report Type*`.** Compare to
+  `Event Type`, the separate, much more detailed field the 11-buckets
+  pipeline uses (specific codes like "E - Lab test problem - mislabeled
+  specimen") -- that one has no "Analyst-" prefix and reads as
+  reporter-filled at intake. The "Analyst-" prefix on Report Type is a
+  real, concrete signal that this field is assigned by a safety analyst,
+  not the frontline staff member filing the report -- which is exactly the
+  post-review assignment pattern that would make it circular with the
+  harm label, same as the original leakage fields.
+- **A closer look at what's actually inside "Serious Event" complicates the
+  original 99.3% number.** Of 8,113 rows labeled "Serious Event," 6,300 are
+  grade E and 918 are grade F -- the softer end of the hurt range. Only 4
+  are I, 3 are G, 1 is H. Most of the worst cases (147 of 167 I-grade rows,
+  127 of 144 H-grade rows, 71 of 84 G-grade rows, across the whole dataset)
+  are actually filed as "Incident," not "Serious Event." So the 99.3%
+  agreement is real but is
+  driven by volume in the E/F range -- "Serious Event" is not a reliable
+  signal for the very worst outcomes specifically, which matters if anyone
+  planned to use it as a proxy for the G/H/I tier rather than the broader
+  hurt/not-hurt split.
+- **The date-gap between "Event Date" and "Date Received" doesn't help**
+  distinguish this -- median gap is 0 days for every Report Type category,
+  so it only tells us when the report was logged, not when the analyst
+  made the Report Type call (there's no timestamp for that step in this
+  dataset).
+
+Net: the column name is real, useful evidence toward "set after review, by
+an analyst" -- stronger than an unresolved guess, still short of a
+sponsor-confirmed fact. Recommend leading with this in the sponsor
+conversation rather than opening with "we don't know."
+
+**CONFIRMED, same day:** the user confirmed directly -- the analyst/reviewer
+fills in Report Type after review, not the reporter at intake. The evidence
+above was correct. This is no longer an open question.
+
+**Action taken as a result:** Report Type is removed from `prefill_extra_fields.py`
+as a modeled pre-fill target. `train_and_eval()` is no longer called for it,
+`report_type_model.joblib` is no longer produced (the stale artifact was
+deleted), and `check_report_type_as_proxy()` is now a diagnostic-only
+function documenting the confirmed finding, not a prompt for sponsor
+confirmation. The Severity Model Reference's scorecard and §14.7 are updated
+to match -- Report Type is now in the same excluded category as
+`manager_comments`/`unit_actions_taken`, just for the pre-fill task rather
+than the severity model's input.
+
 ## Event-type pipeline (teammate's `11-buckets` repo)
 
 ```mermaid
