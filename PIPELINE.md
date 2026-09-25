@@ -187,11 +187,14 @@ The round-1 writeup had real errors, caught in a second review:
   trailing their reported number. AUROC 0.986 added as the threshold-free
   comparison point.
 - **"No access to their code" was disputed, then re-confirmed as still true.**
-  A review claimed their training script was "attached earlier in this
-  conversation" -- it was not; no such file exists anywhere in this
-  project's history. The scorecard now says the head-to-head is blocked on
-  the script itself, not compute, and will be revisited if that script is
-  ever actually shared.
+  *(Corrected in round 3: this was wrong. The script existed on disk the
+  whole time, in `~/Downloads/Capstone Engineering Files/` -- the check here
+  only searched conversation history, not the filesystem. Don't lift this
+  bullet out of context as a factual claim.)* Original text: a review
+  claimed their training script was "attached earlier in this conversation"
+  -- it was not; no such file exists anywhere in this project's history. The
+  scorecard now says the head-to-head is blocked on the script itself, not
+  compute, and will be revisited if that script is ever actually shared.
 - **Tokenizer bug, fixed, model retrained.** scikit-learn's default token
   pattern dropped single characters, so "X-ray" tokenized to "ray" --
   wrong in every downstream explanation, not just the demo. Fixed
@@ -241,7 +244,11 @@ things and fixed the doc's remaining stale numbers:
   a second reason their number and this model's number aren't directly
   comparable. The scorecard now reads "pending GPU run," not "blocked" --
   next step is training their script twice on a Colab T4 (once as written,
-  once with those two fields stripped) to size the effect on real data.
+  once with those two fields stripped) *(corrected in round 4: that rerun
+  can only use synthetic data, since that's what this project has access to
+  -- it measures the leakage effect on synthetic data, not "the effect on
+  real data." Their reported number was measured on the real CY2024 Excel
+  export and only someone with access to that data can actually test it)*.
 - **The two systematic "serious" misses got pulled and read, not just
   counted.** Across every recall target tested, the same 1-2 of the test
   set's 20 G/H/I cases are missed regardless of cutoff
@@ -250,10 +257,12 @@ things and fixed the doc's remaining stale numbers:
   ("could have received an incorrect... dose," "patient looked fine and was
   talking normally") -- the eventual G/H severity was determined later, by a
   reviewer who knew the outcome, using information this text field never
-  contained. No threshold change fixes this; it's a hard floor on what
-  text-only triage can catch for this report shape, and it's now stated as
-  the headline of that section, not a footnote below the operating-point
-  table.
+  contained. *(Corrected in round 4, and this is the important one: "no
+  threshold change fixes this" was false -- a cutoff around 0.152 does catch
+  both, at a real, computable cost in flag rate. And "the reviewer knew the
+  outcome later" was an unverified guess presented as fact; round 4 restates
+  it as one of two hypotheses, the other being synthetic-data label noise.
+  Don't lift either claim out of context.)*
 - **Stale numbers from the pre-retrain model, fixed.** The doc's §8/§10/§11
   tables still showed the pre-tokenizer-fix numbers (96.8% recall, 27.5%
   precision, 76.7% accuracy, cutoff 0.225, 17.0% flag rate) even though §14
@@ -334,8 +343,6 @@ Committed and tagged tonight per the round-4 review's instruction --
 `severity_model/evaluation.json` and `extended_evaluation.json` are pinned
 to the commit that produced them.
 
----
-
 ## Event-type pipeline (teammate's `11-buckets` repo)
 
 ```mermaid
@@ -373,8 +380,9 @@ Their own finding: the event-type hint barely moves PR-AUC (0.466 → 0.472).
 
 **Independently verified:** rebuilt this exact architecture and ran it on our
 own data as a sanity check (`combined_mtl.py`) — got 83.1% event-type
-accuracy, close enough to their 87.3% to confirm the approach works, without
-touching their actual codebase.
+accuracy vs. their reported 87.3%. That's a 4-point gap, not a match — "same
+ballpark, approach clearly works in principle" is the accurate read, not
+"confirmed."
 
 ### Tested and rejected: merging the two pipelines
 
