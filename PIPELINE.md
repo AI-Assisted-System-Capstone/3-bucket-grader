@@ -35,15 +35,22 @@ Patient found on floor at 0300, alert and oriented, complaining of
 left hip pain. X-ray confirmed fracture. Transferred to OR for repair.
 ```
 
-TF-IDF (`baseline_grader.py`, `ordinal_vs_coarse.py`):
+TF-IDF, current production code (`severity_model.py`; the retired
+`baseline_grader.py`/`ordinal_vs_coarse.py` use the same shape without the
+`token_pattern` fix below, since they predate it):
 
 ```python
-TfidfVectorizer(stop_words="english", max_features=20000, ngram_range=(1, 2), min_df=3)
+TfidfVectorizer(
+    stop_words="english", max_features=20000, ngram_range=(1, 2), min_df=3,
+    token_pattern=r"(?u)\b[\w-]+\b",  # keeps hyphenated terms like "X-ray" intact
+)
 LogisticRegression(max_iter=1000, class_weight="balanced", n_jobs=-1)
 ```
 
-Illustrative output for this report: `A:1% B1:0% B2:2% C:3% D:4% E:15% F:65% G:6% H:3% I:1%`
-→ pre-fill = **F** (highest), triage score = **90%** (sum of E through I).
+Actual output from the current retrained model on this exact report (not
+illustrative -- run through `severity_model/model.joblib`):
+`A:3% B1:5% B2:6% C:15% D:9% E:36% F:18% G:5% H:1% I:1%`
+→ pre-fill = **E** (highest), triage score = **61%** (sum of E through I).
 
 ### The three branches that exist in the code today
 
@@ -61,9 +68,10 @@ three outputs.
 **Decision: Branch 2 is the one to keep — done, 2026-09-24.** `severity_model.py`
 is the finished version: trains the 10-grade model, derives the letter grade,
 the 3-bucket label (sum A+B1+B2+C+D / E+F / G+H+I), and the triage score all
-from one model, picks a triage cutoff on validation for the sponsor's
-required >=95% recall, calibrates the triage probability (Platt scaling, to
-correct for training data oversampling harm relative to the real rate), and
+from one model, picks a triage cutoff on validation for this project's own
+default target of >=95% recall (not a documented sponsor requirement),
+calibrates the triage probability (Platt scaling, to correct for training
+data oversampling harm relative to the real rate), and
 saves everything to `severity_model/` (`vectorizer.joblib`, `model.joblib`,
 `calibrator.joblib`, `config.json`, `evaluation.json`). `baseline_grader.py`
 (Branch 1) and the standalone binary model in `ordinal_vs_coarse.py`
@@ -82,26 +90,29 @@ going forward.
 
 Accuracy 96%, macro F1 0.77.
 
-**Branch 2 — 10 grades:**
+**Branch 2 — 10 grades** (all numbers below read directly from
+`severity_model/evaluation.json`, current as of the round-4 retrain --
+this table and the "Final, saved model" section below are the pipeline's
+canonical numbers; the Severity Model Reference doc mirrors them):
 
 | Grade | Precision | Recall | Test rows |
 |---|---|---|---|
-| A | 0.44 | 0.68 | 442 |
-| B1 | 0.15 | 0.32 | 47 |
+| A | 0.45 | 0.68 | 442 |
+| B1 | 0.15 | 0.34 | 47 |
 | B2 | 0.75 | 0.81 | 1,505 |
 | C | 0.77 | 0.70 | 2,487 |
 | D | 0.89 | 0.81 | 3,428 |
-| E | 0.59 | 0.85 | 318 |
-| F | 0.62 | 0.85 | 65 |
+| E | 0.58 | 0.84 | 318 |
+| F | 0.65 | 0.86 | 65 |
 | G | 0.60 | 0.50 | 6 |
-| H | 0.81 | 0.93 | 14 |
+| H | 0.72 | 0.93 | 14 |
 | I | — | — | 0 (no test cases at all) |
 
 | | This model | Guess-most-common-grade |
 |---|---|---|
-| Exact-letter accuracy | 76.7% | 41.2% |
-| Mean grade-distance error | 0.40 | 0.95 |
-| Quadratic-weighted kappa | 0.71 | 0.00 |
+| Exact-letter accuracy | 76.6% | 41.2% |
+| Mean grade-distance error | 0.39 | 0.95 |
+| Quadratic-weighted kappa | 0.72 | 0.00 |
 
 ### Final, saved model (`severity_model.py`) — closed out 2026-09-24
 
@@ -111,35 +122,36 @@ Accuracy 96%, macro F1 0.77.
 |---|---|---|---|
 | none | 0.99 | 0.99 | 0.99 |
 | some | 0.76 | 0.83 | 0.79 |
-| serious | 0.65 | 0.75 | 0.70 |
+| serious | 0.62 | 0.75 | 0.68 |
 
 **Honest trade-off vs. the original Branch 1 model** (which trained directly
 on 3 buckets, no letter grade): precision on `some`/`serious` went up a lot
-(0.55 → 0.76 / 0.65), but recall went down (`some` 0.89 → 0.83, `serious`
-0.80 → 0.75). The sponsor's stated requirement is high sensitivity even at
+(0.55 → 0.76 / 0.62), but recall went down (`some` 0.89 → 0.83, `serious`
+0.80 → 0.75). This project's default priority is high sensitivity even at
 the cost of precision — so a straight argmax over the derived buckets is
 *not* automatically the right cutoff to use if the 3-bucket label itself is
 still shown to reviewers. The **calibrated triage score below is the
-sponsor-facing answer to that requirement**, tuned explicitly for recall;
-the 3-bucket label is a secondary, human-readable summary, not the flagging
-mechanism.
+answer to that priority**, tuned explicitly for recall; the 3-bucket label
+is a secondary, human-readable summary, not the flagging mechanism.
 
 **Triage cutoff, picked on validation only for >=95% recall, frozen and
 applied to test:**
 
 | | Value |
 |---|---|
-| Cutoff (raw triage score) | 0.225 |
+| Cutoff (raw triage score) | 0.2361 |
 | Recall achieved on validation | 95.2% |
-| Recall on test (untouched, same cutoff) | **96.8%** |
-| Precision on test | 27.5% |
-| Share of all test reports flagged | 17.0% |
+| Recall on test (untouched, same cutoff) | **96.0%** |
+| Precision on test | 28.9% |
+| Share of all test reports flagged | 16.1% |
 | AUPRC (cutoff-independent ranking quality) | 0.871 |
 
-27.5% precision at 96.8% recall is the honest cost of the sponsor's own
-stated priority: catching nearly all real harm means accepting that roughly
-3 in 4 flagged reports won't turn out to be harmful. That's a explicit,
-measured trade-off now, not a guess.
+28.9% precision at 96.0% recall is the honest cost of this project's own
+default priority: catching nearly all real harm means accepting that roughly
+3 in 4 flagged reports won't turn out to be harmful. That's an explicit,
+measured trade-off now, not a guess. See the Severity Model Reference §14.2
+for the fuller operating-point menu, including the trade-off for catching
+every "serious" case specifically.
 
 **Calibration** (Platt scaling on validation, to correct for the training
 set's oversampled harm rate vs. the real rate in val/test): Brier score

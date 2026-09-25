@@ -7,3 +7,4 @@ __pycache__/
 _mtl_embed_*.npy
 severity_model/*.joblib
 distilbert_output/
+.DS_Store
