@@ -410,6 +410,43 @@ Also fixed: the scorecard's kappa (0.71 -> 0.72, matching §11) and the
 derived-3-bucket macro F1 cited in the "Alternatives" table (0.83 -> 0.82,
 matching this file and `evaluation.json`).
 
+### Tested and rejected: hand-written synthetic augmentation for G/H/I (2026-09-25)
+
+Train has only 71 G, 130 H, 158 I rows out of 50,091 -- tried adding more
+synthetic examples for exactly these three grades to see if it helps.
+`augment_rare_grades.py` hand-writes 60 new reports (20 each) across 15
+distinct clinical scenarios (medication overdose, wrong-site surgery, missed
+sepsis, transfusion reaction, restraint injury, anesthesia complication,
+equipment failure, pressure injury, delayed diagnosis, fall with head
+injury), appended only to the training split -- validation and test are
+untouched, so the comparison is fair.
+
+**Result: no measurable effect.** Accuracy, MAE, and kappa moved by noise
+(+0.0016 / -0.0011 / -0.0003). G and H precision/recall were identical to
+three decimals before and after. Both of the two systematic test-set misses
+(§14.2 in the Severity Model Reference) were still missed, at nearly
+identical scores (0.208->0.200, 0.152->0.158).
+
+**Traced the mechanism, not just the null result:** checked which of the 268
+new vocabulary words the augmented training introduced actually appear in
+the two missed real test reports. Answer: zero words for one, one word
+("critically") for the other. The two real misses use quiet, hedged language
+("could have received an incorrect dose," "patient looked fine and was
+talking normally") -- the same finding from the Severity Model Reference
+§14.2. My hand-written synthetic examples used explicit, unambiguous outcome
+language ("cardiac arrest," "resuscitation unsuccessful," "confirmed
+permanent"), because that's how I write about death and permanent harm.
+**More synthetic data of the obvious kind cannot teach the model to
+recognize the quiet kind** -- it doesn't share any vocabulary with the cases
+that are actually hard. Any future attempt at this would need synthetic
+examples that specifically mimic the hedged, near-miss-sounding style, which
+is a much harder (and more suspect) thing to hand-write convincingly, given
+this project can't yet tell whether that style is a real reporting pattern
+or synthetic-label noise (§14.2 again).
+
+Rejected, same treatment as the MiniLM merge and prior-shift correction
+experiments: a real result, documented, not deployed.
+
 ## Event-type pipeline (teammate's `11-buckets` repo)
 
 ```mermaid
