@@ -343,6 +343,73 @@ Committed and tagged tonight per the round-4 review's instruction --
 `severity_model/evaluation.json` and `extended_evaluation.json` are pinned
 to the commit that produced them.
 
+### Sponsor-facing review, round 5 (2026-09-25) -- the "catch every serious case" row was fit on test, and PIPELINE.md itself needed cleanup
+
+Two more issues in the doc, plus this file catching up to what it was
+describing:
+
+- **The round-4 "catch every serious case" row picked its cutoff on the test
+  set, same mistake in spirit as tuning on data you're reporting on.** Every
+  other row in the operating-point menu freezes its cutoff on validation;
+  this one didn't. Fixed by deriving it on validation instead: September has
+  only 16 G/H/I cases (itself a limitation), and the cutoff that catches all
+  16 of *those* still misses 3 of October's 20 when frozen and applied to
+  test. The test-fit cutoff (0.152, catches all 20) is kept for contrast
+  only, explicitly labeled optimistic-by-construction, with a Wilson 95%
+  interval on "20/20" (~[0.84, 1.00]) stated so it isn't read as a guarantee.
+- **Two leftover notes still contradicted the softened framing**: the §14
+  intro's "confirmed leakage source in the sponsor's own script," and a
+  literal note-to-self in §14.1 about raising something at the weekly
+  meeting before the section ships. Both cut.
+- **§11 repeated the same unsupported claim §8 had already been corrected
+  for** -- "the sponsor's stated priority is recall." Sponsor priority was
+  never actually documented; changed to "this project's default priority,"
+  same fix applied to §8 in an earlier round.
+- **This file itself was stale and hadn't caught up to its own changelog.**
+  The "Decision" and "Final, saved model" sections still showed the
+  pre-round-3 numbers (cutoff 0.225, recall 96.8%, precision 27.5%, flag
+  rate 17.0%, the old per-grade table) even though the changelog below
+  documented the fix. Regenerated directly from `evaluation.json`. The
+  TF-IDF snippet near the top didn't show `token_pattern` either -- fixed.
+  The two false claims preserved in the round 2 and round 3 entries above
+  (file doesn't exist; no threshold fixes the misses) now have inline
+  `(corrected in round N)` notes so they can't be quoted out of context.
+  The merge-rejection paragraph now states plainly that its 0.77 baseline is
+  the old Branch 1 model, not current production (0.82). The 83.1%/87.3%
+  event-type comparison is now called a 4-point gap ("same ballpark"), not
+  "confirmed." The running example's "Grade F" in the closing table was
+  swapped for the actual model's real output on that text (Grade E, 61%
+  triage score) to match the Severity Model Reference doc's own example.
+- **Added the hurt-detection head-to-head and the Event Type open question**
+  (both below) at the user's request, to make the severity-approach case
+  concrete and to flag the 11-way classifier's possible redundancy with an
+  intake-filled field before the teammate invests further in it.
+
+### Sponsor-facing review, round 6 (2026-09-25) -- round 5's new row was itself wrong
+
+*(Corrected in round 6: round 5's "catch every val G/H/I case" row, described
+above, was logically backwards and has been removed from the doc.)* The
+val-derived cutoff (0.350) is *higher* than the 95%-target cutoff already in
+the menu (0.236) -- since a lower cutoff flags a superset of what a higher
+one flags, the 95% row already caught every September serious case for
+free, and the new row was strictly worse on October (misses 3 vs. the
+95% row's 2). "Fit on validation to catch the serious tier" here just picks
+the highest cutoff that still happens to clear September's cases -- the
+least sensitive choice, not an optimization.
+
+The real finding, kept in place of the row: every September (validation)
+G/H/I case scores at least 0.350, well above any cutoff actually in use,
+while October's misses score 0.152-0.310 -- below any September serious
+case. Validation tuning can't help here because September has no serious
+case that looks like October's hard ones. The two months also have a
+different serious-tier mix (September: 0 H, 9 I, 7 G; October: 14 H, 0 I,
+6 G) -- ordinary variance in a ~20-case-a-month tier, or more weight behind
+the label-noise hypothesis. The test-fit 0.152 contrast row is unchanged.
+
+Also fixed: the scorecard's kappa (0.71 -> 0.72, matching §11) and the
+derived-3-bucket macro F1 cited in the "Alternatives" table (0.83 -> 0.82,
+matching this file and `evaluation.json`).
+
 ## Event-type pipeline (teammate's `11-buckets` repo)
 
 ```mermaid
