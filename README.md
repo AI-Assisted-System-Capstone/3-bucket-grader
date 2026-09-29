@@ -36,8 +36,7 @@ tested on reports from a later month than it trained on:
 | `serious` | 359 (0.7%) | 16 (0.2%) | 20 (0.2%) |
 
 Training over-samples harm cases on purpose; validation and test reflect the
-natural rate. These are the same rows the `11-buckets` pipeline uses, so the
-two projects' numbers are directly comparable.
+natural rate.
 
 ## Model inputs (leakage-safe)
 
@@ -107,27 +106,12 @@ All numbers are on the October test set (8,312 reports), from
 
 ### Triage (harmed vs. not harmed)
 
+At the production cutoff (0.236):
+
 | Metric | Value |
 |---|---|
-| Recall at production cutoff (0.236) | **96.0%** |
-| Precision at production cutoff | 28.9% |
-| Share of reports flagged | 16.1% (about 1 in 6) |
-| AUPRC | 0.871 |
-| AUROC | 0.986 |
-| Brier score, raw → calibrated | 0.031 → 0.014 |
-
-**Operating points** (cutoffs picked on validation):
-
-| Recall target | Test recall | Test precision | Flagged per 100 reports |
-|---|---|---|---|
-| 95% (production) | 96.0% | 28.9% | 16.1 |
-| 90% | 91.1% | 48.1% | 9.2 |
-| 85% | 87.6% | 61.3% | 6.9 |
-| 80% | 82.4% | 77.6% | 5.1 |
-
-**Per-day ranking:** if a reviewer reads the top 20 reports by score each
-day, they catch 89.3% of that day's harm cases on average. The top 50 catch
-97.1%.
+| Recall | **96.0%** |
+| Precision | 28.9% |
 
 ### Letter grade (10-way)
 
@@ -144,22 +128,21 @@ kappa 0.72.
 
 Macro F1: 0.82.
 
-### Compared with other approaches
+### Compared with the sponsor's model
 
-| Approach | Result | Decision |
+The sponsor reported sensitivity (the same thing as recall) at a fixed
+specificity: the share of unharmed reports correctly *not* flagged. Setting
+this model to the same 96.0% specificity:
+
+| | Sensitivity (recall) | Specificity |
 |---|---|---|
-| **This model (TF-IDF + LogReg, 10-grade)** | 3-bucket macro F1 0.82; hurt PR-AUC 0.871 | **Production** |
-| DistilBERT fine-tuned (3-bucket) | Macro F1 0.79; `serious` precision 0.78 but recall 0.70 | Not adopted (lower recall), still a candidate |
-| Teammate's MiniLM model, hurt head | Hurt PR-AUC 0.472; 8.1% precision at ~95% recall | Severity stays in this repo |
-| MiniLM multi-task (event type as a clue) | Macro F1 0.45 with the clue, 0.44 without | Rejected: clue doesn't help, encoder too weak |
-| 60 synthetic G/H/I reports added to training | No change in G/H/I precision/recall | Rejected |
-| Prior-shift correction | No improvement | Rejected |
+| Sponsor's Clinical-Longformer | 95.2% | 96.0% |
+| This model | 90.3% | 96.0% |
 
-**Sponsor comparison:** at the sponsor's 96.0% specificity, this model gets
-90.3% sensitivity, versus the sponsor's reported 95.2%. It's not a like-for-like
-comparison: their Clinical-Longformer script feeds `MANAGER COMMENTS` and
-`UNIT_ACTIONS_TAKEN` into the model, uses a random rather than date-based
-split, and was measured on real data, not this synthetic set.
+This is not a like-for-like comparison. The sponsor's script feeds
+`MANAGER COMMENTS` and `UNIT_ACTIONS_TAKEN` into the model, uses a random
+rather than date-based split, and was measured on real data, not this
+synthetic set.
 
 ## Known issues and limitations
 
