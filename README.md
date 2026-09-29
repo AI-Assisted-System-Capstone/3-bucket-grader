@@ -1,266 +1,256 @@
-# 3-Bucket Harm Severity Grader
+# Harm Severity Grader
 
-Classifies free-text safety incident reports by harm severity, on the full 10-grade
-PSRS scale (A through I), so reviewers can triage the highest-risk reports faster
-than reading all of them manually. The 3-bucket label (none/some/serious) and a
-binary triage score are both derived from the same 10-grade model, not trained
-separately.
+Grades free-text patient safety incident reports on the 10-grade PSRS harm
+scale (A through I) so reviewers can triage the highest-risk reports first
+instead of reading every one. One model produces three outputs:
 
-See [PIPELINE.md](PIPELINE.md) for how this pipeline works end to end (with
-diagrams), how it relates to the teammate's event-type pipeline, and the full
-results for every model variant tried so far.
+- **Letter grade** (A, B1, B2, C, D, E, F, G, H, I)
+- **3-bucket label**: `none` / `some` / `serious`
+- **Triage score**: a calibrated probability that the patient was harmed,
+  plus a flag for priority review
 
-## Reports
+This repo covers the severity/triage requirement. The teammate's `11-buckets`
+repo covers event-type and recurring-theme classification. The two answer
+different sponsor requirements and stay separate.
 
-The source dataset has 23 columns per report (event metadata, medication fields,
-location, and four free-text narrative fields). Of those, only one column drives the
-label: **Significance (PSRS Harm score)**, a 10-grade scale (A, B1, B2, C, D, E, F, G,
-H, I). The production model trains directly on all 10 grades; the 3-bucket grouping
-below is a derived summary, not a separate label:
+See [PIPELINE.md](PIPELINE.md) for diagrams and full per-experiment detail.
+
+## Data
+
+Synthetic MIDAS-style dataset: 80,000 reports, 23 columns. 67,003 are usable
+after dropping rows with no harm score or no narrative text.
 
 | Bucket | Grades | Meaning |
 |---|---|---|
-| `none` | A, B1, B2, C, D | Unsafe condition / near miss / no harm |
-| `some` | E, F | Harm, treated (incl. added hospitalization) |
-| `serious` | G, H, I | Permanent harm / near death / death |
+| `none` | A, B1, B2, C, D | Unsafe condition, near miss, or no harm |
+| `some` | E, F | Temporary harm, treated (incl. added hospitalization) |
+| `serious` | G, H, I | Permanent harm, near death, or death |
 
-On the current 80k-row dataset (67,003 usable rows after dropping missing-harm-score
-and empty-text rows), split by the dataset's real Jan-Aug/Sep/Oct date split
-(see "Fields" and "Results" below):
+**Split by date**, decoded from the `Event No.` prefix, so the model is always
+tested on reports from a later month than it trained on:
 
-| Bucket | Train (Jan-Aug) | Val (Sep) | Test (Oct) |
+| Bucket | Train (Jan–Aug) | Val (Sep) | Test (Oct) |
 |---|---|---|---|
 | `none` | 42,523 (84.9%) | 8,245 (95.9%) | 7,909 (95.2%) |
 | `some` | 7,209 (14.4%) | 339 (3.9%) | 383 (4.6%) |
 | `serious` | 359 (0.7%) | 16 (0.2%) | 20 (0.2%) |
 
-Note the training set's harm rate is deliberately higher than validation/test
-(the synthetic data over-samples harm cases in training, same as the teammate's
-11-buckets dataset) — validation and test reflect the natural rate.
+Training over-samples harm cases on purpose; validation and test reflect the
+natural rate. These are the same rows the `11-buckets` pipeline uses, so the
+two projects' numbers are directly comparable.
 
-## Fields
+## Model inputs (leakage-safe)
 
-**Fixed 2026-09-22:** the model input used to include `manager_comments` and
-`unit_actions_taken`, both filled in *after* a safety officer investigates a
-report. A model reading them is scoring hindsight, not predicting from what's
-available at submission time — this is the same leakage our teammate's
-11-buckets project flags and hard-blocks in its pipeline. It's also almost
-certainly why this project's earlier numbers (97% acc, 0.82 `serious` recall)
-looked stronger than their event-type/hurt baseline (PR-AUC 0.47): different,
-easier task, not a better model.
+The model only reads what's available when a report is submitted:
 
-Model input is now built by `data_pipeline.py`, shared by both `baseline_grader.py`
-and `finetune_distilbert.py`, and matches the teammate's `src/pipeline.py`
-feature set so both projects can be compared on the same rows:
+- `event_comments`, the reporter's narrative
+- A short labeled prefix of intake fields: unit (`Location Name`), service
+  (`Encounter Service`), age band, and prescribed / administered / suspect
+  medication and dose
 
-- `event_comments` (the narrative — the only free-text field still used)
-- a short intake-field prefix, available at submission time: unit
-  (`Location Name`), service (`Encounter Service`), age (`Age at Encounter`),
-  and prescribed/administered/suspect medication + dose
+These fields are **never** used, because they're filled in after a safety
+officer reviews the report and would leak the answer:
+`manager_comments`, `unit_actions_taken`, `shareable_lessons`, and
+`Analyst-Report Type`. `data_pipeline.py` asserts on every load that the
+first three never reach the model.
 
-`manager_comments`, `unit_actions_taken`, and `shareable_lessons` are never
-read from disk. `data_pipeline.py` asserts this on every load.
+## Workflow
 
-## Tokenize
+```
+data_pipeline.py            load → drop leaked fields → build input text → date split → derive labels
+        │
+severity_model.py           train TF-IDF + LogReg on 10 grades → derive bucket + triage score
+        │                   → pick cutoff on Sep → calibrate on Sep → evaluate on Oct → save
+        │
+severity_model_extended.py  sponsor comparison, operating-point menu, per-day recall@k,
+        │                   subgroup breakdown with confidence intervals, explanations
+        │
+prefill_extra_fields.py     HPI Designation classifier (pre-fill helper)
+```
 
-Text is tokenized with the DistilBERT tokenizer at a max length of **128 tokens**.
-This was a starting guess based on the rough sense that an average report runs
-70-100 words, not yet verified against the actual token-length distribution of the
-dataset — see To-Dos.
+### How the model works
 
-## Model
+1. **Text to features:** TF-IDF on unigrams and bigrams, top 20,000 features,
+   English stop words removed. It uses a custom token pattern so hyphenated
+   terms like "X-ray" stay intact.
+2. **Classifier:** multinomial logistic regression on all 10 grades, with
+   `class_weight="balanced"` to handle the heavy imbalance.
+3. **Derived outputs:** the 3-bucket label sums each group's grade
+   probabilities. The triage score is the summed probability of grades E–I.
+4. **Cutoff:** picked on September (validation) as the highest cutoff that
+   still reaches ≥95% recall on harm cases, then frozen and applied to
+   October unchanged. The 95% target is this project's own default, not a
+   documented sponsor requirement.
+5. **Calibration:** Platt scaling fit on validation, so the triage score reads
+   as a real probability despite training's inflated harm rate.
 
-**Production model, as of 2026-09-24: `severity_model.py`.** TF-IDF (unigrams +
-bigrams, top 20k features) + Logistic Regression, trained on the full 10-grade
-PSRS scale (not just 3 buckets), `class_weight="balanced"` to counter the
-severe class imbalance. Full architecture, code, and how the letter grade,
-3-bucket label, and triage score are all derived from this one model:
-see `PIPELINE.md`.
+### Running it
 
-`baseline_grader.py` (3-bucket only) is an earlier, superseded version — kept
-for history, not run going forward. `finetune_distilbert.py` (DistilBERT,
-fine-tuned end-to-end on the 3-bucket label) **was re-run 2026-09-25** on the
-current leakage-safe pipeline: macro F1 0.79, beating the old 3-bucket
-baseline (0.77) but short of the current production model (0.82), with much
-better precision on the rare "serious" class (0.78 vs. 0.62) at the cost of
-recall (0.70 vs. 0.75). Not swapped in — this project prioritizes recall over
-precision on harmful classes — but it's a real, close result now, not an
-open question. See `PIPELINE.md` for the full breakdown.
+Scripts need Python 3.11 with pandas, scikit-learn and joblib (transformer
+experiments also need torch, transformers, datasets and accelerate). The
+dataset isn't in the repo; point `DATA_PATH` in `data_pipeline.py` at your
+copy of the parquet file.
 
-## Classify
+```bash
+python3 severity_model.py            # trains, evaluates, saves to severity_model/
+python3 severity_model_extended.py   # extended evaluation
+python3 prefill_extra_fields.py      # HPI Designation classifier
+```
 
-**Done, 2026-09-24.** The triage cutoff is no longer plain argmax — it's
-picked on the validation set for this project's own default target of ≥95%
-recall (not a documented sponsor requirement), frozen, and applied unchanged
-to test (96.0% recall achieved there, at 28.9% precision — flagging about 1
-in 6 reports). The raw score is also calibrated (Platt scaling) so it reads
-as an honest probability, not just a ranking signal, correcting for the
-training set's oversampled harm rate. Full numbers in `PIPELINE.md` under
-"Final, saved model," including the fuller operating-point menu (§14.2 in
-the Severity Model Reference doc) for the trade-off in catching every
-"serious" case specifically.
+Outputs in `severity_model/`: `evaluation.json`, `extended_evaluation.json`
+and `config.json` are committed; the `.joblib` model files are gitignored.
 
 ## Results
 
-**For current numbers, see `PIPELINE.md`.** The section below is the original
-direct-3-bucket model (Branch 1) — superseded 2026-09-24 by the 10-grade
-production model in `severity_model.py`, whose derived 3-bucket macro F1 is
-0.82 (vs. 0.77 below). Kept here as the historical baseline everything else
-in this README and `PIPELINE.md` is compared against.
+All numbers are on the October test set (8,312 reports), from
+`severity_model/evaluation.json` and `extended_evaluation.json`.
 
-### Historical (as of 2026-09-22): leakage-safe fields, real time-based split (Oct test set)
+### Triage (harmed vs. not harmed)
 
-Train = Jan-Aug (50,091 rows), validation = Sep (8,600), test = Oct (8,312) —
-the dataset's real time split, same rows the teammate's 11-buckets model uses,
-via `data_pipeline.py`.
+| Metric | Value |
+|---|---|
+| Recall at production cutoff (0.236) | **96.0%** |
+| Precision at production cutoff | 28.9% |
+| Share of reports flagged | 16.1% (about 1 in 6) |
+| AUPRC | 0.871 |
+| AUROC | 0.986 |
+| Brier score, raw → calibrated | 0.031 → 0.014 |
 
-**Dummy baseline** (always predict `none`): 95% accuracy, 0% recall on both
-minority classes — accuracy alone is meaningless here given the imbalance.
+**Operating points** (cutoffs picked on validation):
 
-**TF-IDF + Logistic Regression**, test set (Oct): 96% accuracy, 77% macro F1.
-
-| Bucket | Precision | Recall |
-|---|---|---|
-| `none` | 0.99 | 0.96 |
-| `some` | 0.55 | 0.89 |
-| `serious` | 0.55 | 0.80 |
-
-`serious` recall (0.80) held up well even after dropping the leaky fields —
-the words that drive it (*died, permanent, deceased, death, life threatening*)
-live in the narrative itself, not in the post-investigation comments. Precision
-dropped (0.83 → 0.55 on `serious`), which is the honest cost of removing
-hindsight the model previously had access to.
-
-**DistilBERT**, re-run 2026-09-25 on this same 3-bucket task and split: macro
-F1 0.79 (see "Model" above for the full breakdown vs. the current production
-model). Beats this table's 0.77 baseline; still not adopted.
-
-### Combined multi-task experiment (2026-09-24) — tried, did not beat the baseline
-
-`combined_mtl.py` tests the merge idea head-on: does adding the teammate's
-11-bucket event type as an input clue improve severity prediction? Architecture
-mirrors their `src/mtl.py` (frozen `all-MiniLM-L6-v2` encoder, Head A = 11-way
-event type, Head C = 3-way severity fed Head A's softmax probs), trained
-jointly, 3 seeds, with a no-clue ablation for comparison, on the same
-leakage-safe / date-split data as everything else here.
-
-| Metric | With event-type clue | Without clue (ablation) |
-|---|---|---|
-| Event-type accuracy | 0.831 ± 0.006 | 0.831 ± 0.006 |
-| `serious` precision | 0.087 ± 0.017 | 0.073 ± 0.007 |
-| `serious` recall | 0.517 ± 0.062 | 0.583 ± 0.103 |
-| `some` precision | 0.190 ± 0.020 | 0.189 ± 0.009 |
-| `some` recall | 0.767 ± 0.038 | 0.762 ± 0.017 |
-| macro F1 | 0.451 ± 0.020 | 0.444 ± 0.005 |
-
-(Event-type accuracy 83.1% is a sanity check that the setup is correct — a
-4-point gap from the teammate's reported 87.3% on the same architecture, not
-a match. Rerun 2026-09-25 with fresh, uncached embeddings to rule out a stale
-cache: identical result, so this gap is real, not an artifact.)
-
-**Two findings, both negative for this specific approach:**
-
-1. **The event-type clue does not measurably help severity prediction.** The
-   with/without-clue gap (0.451 vs 0.444 macro F1) is smaller than the
-   seed-to-seed noise (±0.02). This replicates the teammate's own finding on
-   their frozen-encoder hurt/not-hurt task ("a frozen encoder may simply not
-   be able to make use of the clue") -- independently, on a different task.
-2. **The MiniLM multi-task setup underperforms TF-IDF by a lot**: macro F1
-   0.45 here vs. 0.77 for the direct 3-bucket TF-IDF baseline above, or 0.82
-   for the current production model's derived 3-bucket output — an even
-   bigger gap against what's actually shipped. `serious` precision falls
-   from 0.55 to 0.07-0.09. A frozen, generic
-   384-dim sentence embedding loses the sharp, low-frequency words ("died,"
-   "permanent," "deceased") that a 20k-feature TF-IDF vector captures
-   directly and that drive `serious` detection.
-
-**Conclusion: do not ship this.** The "cheap" version of the merge (their
-frozen-encoder architecture, borrowed as-is) costs more than it gives back.
-If the event-type-as-clue idea is worth testing again, it needs to sit on top
-of a fine-tuned encoder (DistilBERT or Bio_ClinicalBERT) that already beats
-TF-IDF, not a frozen general-purpose one -- a real next step, not a re-run of
-this one. Code: `combined_mtl.py`. Raw per-seed results:
-`combined_mtl_results.json`.
-
-### Previous (2026-09-17) — retired, do not cite
-
-The numbers below used `manager_comments`/`unit_actions_taken` (post-investigation
-leakage) and a random stratified split instead of the real time-based one. Kept
-here only as a record of what changed, not as a result to compare against.
-
-| Model | Accuracy | `serious` precision | `serious` recall |
+| Recall target | Test recall | Test precision | Flagged per 100 reports |
 |---|---|---|---|
-| TF-IDF + LogReg | 96% | 0.83 | 0.76 |
-| DistilBERT | 97% | 0.87 | 0.82 |
+| 95% (production) | 96.0% | 28.9% | 16.1 |
+| 90% | 91.1% | 48.1% | 9.2 |
+| 85% | 87.6% | 61.3% | 6.9 |
+| 80% | 82.4% | 77.6% | 5.1 |
 
-## Open questions / To-Dos
+**Per-day ranking:** if a reviewer reads the top 20 reports by score each
+day, they catch 89.3% of that day's harm cases on average. The top 50 catch
+97.1%.
 
-- [x] ~~**High sensitivity as this project's own default priority**~~ — addressed
-      via the calibrated triage score, not the raw `serious`-bucket argmax
-      (§8/§14.2 in the Severity Model Reference). Note: this was originally
-      logged as a documented sponsor requirement; it isn't one, it's this
-      project's own default target, corrected across several rounds of review
-      — see `PIPELINE.md`.
-- [x] ~~**~249 harm reports currently misclassified as `none`**~~ — done. Found 242
-      false negatives (236 `some`, 6 `serious`) in the test set. Key finding: many
-      of these narratives explicitly downplay harm ("no harm noted", "no adverse
-      events reported") despite the official harm grade saying otherwise — a
-      possible narrative/label mismatch worth raising with the sponsor. Not a
-      short-text problem (FNs are *longer* on average). Mostly confident misses,
-      not borderline (only 15% are "near misses" a lower threshold would fix).
-- [x] ~~**Column scope**~~ — done, 2026-09-22. Medication fields (prescribed /
-      administered / suspect-drug + dose) are now in the input prefix, alongside
-      unit/service/age. Semantic clustering on drug names is still a separate,
-      not-yet-built analysis — this just makes the fields available to the model.
-- [x] ~~**Label the merged text fields**~~ — done. Text fields are now prefixed
-      (`Event Comments: ...`, etc.) instead of blindly concatenated.
-- [x] ~~**Drop leaked post-investigation fields**~~ — done, 2026-09-22.
-      `manager_comments`/`unit_actions_taken` removed from model input; see
-      "Fields" and "Results" above. `data_pipeline.py` now hard-asserts they
-      never reach the model.
-- [x] ~~**Time-based validation**~~ — done, 2026-09-22. `data_pipeline.py` now
-      uses the dataset's real Jan-Aug/Sep/Oct split (via the `Event No.` prefix),
-      matching the teammate's 11-buckets pipeline. Split sizes (50,091/8,600/8,312)
-      match theirs exactly, confirming both projects are now reading the same rows.
-- [x] ~~**Move from 3-bucket to the full 10-grade PSRS scale**~~ — done,
-      2026-09-24. `severity_model.py` is the finished model: trains on all 10
-      grades, derives the letter grade, the 3-bucket label, and the triage
-      score from one model. See `PIPELINE.md` for the full writeup.
-      `baseline_grader.py` is superseded, kept for history only.
-- [x] ~~**Threshold vs. argmax**~~ — done, 2026-09-24, using the teammate's
-      approach as the template: cutoff picked on validation for ≥95% recall
-      (this project's own default target, not a documented sponsor
-      requirement), frozen, applied to test (96.0% recall achieved, 28.9%
-      precision — the honest cost of that target). Platt-scaled calibration
-      added on top since training data oversamples harm relative to
-      validation/test. Details and numbers in `PIPELINE.md`.
-- [x] ~~**Re-run DistilBERT**~~ — done, 2026-09-25. Macro F1 0.79 on the
-      3-bucket task, current leakage-safe pipeline: beats the old 0.77
-      baseline, short of production's 0.82, better "serious"-class precision
-      but worse recall. Not swapped in — see "Model" above for the full
-      trade-off and `PIPELINE.md` for the complete writeup.
-- [ ] **Verify `MAX_LENGTH=128`** against the actual token-length distribution
-      of the dataset instead of the current word-count guess — the 0.79
-      DistilBERT result above almost certainly undersells it if this is tuned.
-- [x] ~~**Combine with teammate's 11-buckets model (frozen-MiniLM version)**~~ —
-      tried, 2026-09-24, did not beat the baseline. See "Combined multi-task
-      experiment" above: event-type clue doesn't measurably help severity
-      (gap smaller than seed noise), and the MiniLM multi-task setup itself
-      underperforms plain TF-IDF by a lot (macro F1 0.45 vs 0.77). Not shipped.
-- [ ] **Retry the combined model on a fine-tuned encoder** instead of frozen
-      MiniLM (DistilBERT or Bio_ClinicalBERT, jointly fine-tuned for both
-      event-type and severity). The frozen-encoder version above was cheap to
-      test but too weak on its own to tell whether the event-type clue would
-      help a stronger model -- that question is still open.
-- [x] ~~**Is "Report Type" safe to pre-fill from a model?**~~ — confirmed
-      2026-09-25: no. It's assigned by the analyst/reviewer after review, not
-      the reporter at intake — same leakage pattern as `manager_comments`.
-      Removed from `prefill_extra_fields.py`'s modeled targets entirely. See
-      `PIPELINE.md` for the evidence (including the column's own
-      `Analyst-Report Type*` name) and the confirmation.
-- [x] ~~**Would more synthetic training data help the rare G/H/I grades?**~~ —
-      tried, 2026-09-25, no. 60 hand-written synthetic reports across 15
-      scenarios, added to training only: zero measurable effect on G/H/I
-      precision/recall. Traced why in `augment_rare_grades.py`/`PIPELINE.md`:
-      the synthetic examples' vocabulary doesn't overlap with the real missed
-      test cases' words at all.
+### Letter grade (10-way)
+
+Exact accuracy 76.6%, mean absolute error 0.39 grades, quadratic-weighted
+kappa 0.72.
+
+### 3-bucket (derived)
+
+| Bucket | Precision | Recall | Test cases |
+|---|---|---|---|
+| `none` | 0.99 | 0.99 | 7,909 |
+| `some` | 0.76 | 0.83 | 383 |
+| `serious` | 0.62 | 0.75 | 20 |
+
+Macro F1: 0.82.
+
+### Compared with other approaches
+
+| Approach | Result | Decision |
+|---|---|---|
+| **This model (TF-IDF + LogReg, 10-grade)** | 3-bucket macro F1 0.82; hurt PR-AUC 0.871 | **Production** |
+| DistilBERT fine-tuned (3-bucket) | Macro F1 0.79; `serious` precision 0.78 but recall 0.70 | Not adopted (lower recall), still a candidate |
+| Teammate's MiniLM model, hurt head | Hurt PR-AUC 0.472; 8.1% precision at ~95% recall | Severity stays in this repo |
+| MiniLM multi-task (event type as a clue) | Macro F1 0.45 with the clue, 0.44 without | Rejected: clue doesn't help, encoder too weak |
+| 60 synthetic G/H/I reports added to training | No change in G/H/I precision/recall | Rejected |
+| Prior-shift correction | No improvement | Rejected |
+
+**Sponsor comparison:** at the sponsor's 96.0% specificity, this model gets
+90.3% sensitivity, versus the sponsor's reported 95.2%. It's not a like-for-like
+comparison: their Clinical-Longformer script feeds `MANAGER COMMENTS` and
+`UNIT_ACTIONS_TAKEN` into the model, uses a random rather than date-based
+split, and was measured on real data, not this synthetic set.
+
+## Known issues and limitations
+
+- **Some serious cases are missed.** 2–3 of the 20 G/H/I test cases fall below
+  the production cutoff. Their narratives use hedged, near-miss language
+  ("could have received an incorrect dose") rather than outcome words.
+  A cutoff of about 0.152 catches all of them, at roughly 25 more false
+  alarms per day. That cutoff was fit on test, so it's optimistic.
+- **Validation can't tune for those misses.** Every September G/H/I case
+  scores ≥0.350, while October's misses score 0.152–0.310.
+- **The serious tier is tiny.** 20 test cases (6 G, 14 H, 0 I) and 16 validation
+  cases, so `serious` metrics have wide confidence intervals and grade I isn't
+  evaluated at all.
+- **Rare grades are weak on their own.** B1 F1 is 0.21 and G F1 is 0.55. The
+  letter-grade macro F1 is 0.59, versus 0.82 once grades are grouped into
+  buckets.
+- **Precision is low at the default cutoff.** About 7 in 10 flagged reports are
+  false alarms. That's the cost of the 95% recall target.
+- **Narrative/label mismatch.** Many false negatives say "no harm noted" while
+  carrying a harm grade. This could be real, or noise from the synthetic data.
+- **Synthetic data only.** No real-data validation. Public alternatives were
+  checked: NRLS/LFPSE and SAFRON are access-gated, FAERS has no narrative text,
+  and IFMIR has no severity labels.
+- **No template-overlap check.** There's no archetype ID column, so near-duplicate
+  templates across train and test can't be ruled out.
+- **Subgroup results are inconclusive.** Recall intervals overlap across all
+  services, and subgroup membership is generator-assigned, not real.
+- **Some fields aren't modeled.** Level of Investigation isn't modeled because 98%
+  of rows have one value, which leaves too few RCA cases.
+
+## Open tasks
+
+### Code improvements
+
+- [ ] **Add a prediction entry point.** The only way to score new reports is
+      `demo_predict()` in `severity_model.py`, which runs one hardcoded
+      example. Add a `predict.py` that loads `severity_model/` and scores a
+      CSV/parquet file, writing out grade, bucket, calibrated triage
+      probability and the flag.
+- [ ] **Add tests for the safety-critical pieces.** Small `pytest` checks for
+      the excluded-column assertion, `Event No.` split decoding, the grade →
+      bucket mapping, `bucket_probs` summing to 1, and a round-trip load of
+      the saved model.
+- [ ] **Separate production code from experiments.** Move `baseline_grader.py`,
+      `ordinal_vs_coarse.py`, `combined_mtl.py`, `augment_rare_grades.py` and
+      `error_analysis.py` into `experiments/`, so it's obvious that
+      `data_pipeline.py`, `severity_model.py` and `severity_model_extended.py`
+      are the pipeline.
+- [ ] **Point `error_analysis.py` at the production model.** It was written
+      for the 3-bucket DistilBERT output. Running it on the 10-grade model
+      would make the false-negative review repeatable on what's shipped.
+
+### Experiments
+
+- [ ] **Tune DistilBERT's `MAX_LENGTH`.** 128 tokens was a guess, never
+      checked against the dataset's token-length distribution. The 0.79
+      result likely undersells it.
+- [ ] **Train DistilBERT on all 10 grades.** It's only been run on 3 buckets.
+      Deriving bucket and triage outputs the same way as production would give a
+      like-for-like comparison. Its better `serious` precision makes this worth
+      doing.
+- [ ] **Run the sponsor's Clinical-Longformer script head-to-head.** Needs one
+      GPU/Colab session. Run it twice on the date split: once as written, and
+      once with `MANAGER COMMENTS` / `UNIT_ACTIONS_TAKEN` removed. It will
+      need updates for current `transformers`:
+      - `compute_loss` needs `num_items_in_batch=None`
+      - `evaluation_strategy` → `eval_strategy`
+      - `tokenizer=` → `processing_class=`
+
+      This measures the leakage effect on synthetic data only.
+- [ ] **Retry the combined model on a fine-tuned encoder.** Use DistilBERT or
+      Bio_ClinicalBERT, jointly fine-tuned for event type and severity. The
+      frozen-MiniLM version was too weak to show whether the event-type clue
+      helps a stronger model.
+- [ ] **Target the "quiet" serious misses.** Try features for hedged,
+      potential-harm phrasing, or a second-stage check for reports that
+      mention a high-risk medication or event but score low. Wait until the
+      sponsor answers whether these are real or label noise.
+- [ ] **Cluster drug names.** Medication fields are in the input, but semantic
+      grouping of drug names hasn't been built.
+
+### Needs sponsor input
+
+- [ ] **Triage cutoff policy:** 0.236 (misses 2–3 serious cases) or about 0.152
+      (catches all, with about 25 more false alarms per day). This is a
+      staffing and risk decision.
+- [ ] **Are the missed serious cases real or label noise?** Raise this at the
+      Safety Officer shadowing session.
+- [ ] **Narrative/label mismatch:** the same question at larger scale, for reports
+      that say "no harm noted" but carry a harm grade.
+- [ ] **Archetype IDs**, needed to check template overlap between train and test.
+- [ ] **Is Event Type filled in at intake?** If so, the `11-buckets` 11-way
+      classifier predicts a field that already exists (see end of
+      `PIPELINE.md`).
