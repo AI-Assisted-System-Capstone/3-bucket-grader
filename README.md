@@ -64,6 +64,8 @@ severity_model.py           train TF-IDF + LogReg on 10 grades → derive bucket
 severity_model_extended.py  sponsor comparison, operating-point menu, per-day recall@k,
         │                   subgroup breakdown with confidence intervals, explanations
         │
+predict.py                  load severity_model/ → score a CSV/parquet of new reports
+        │
 prefill_extra_fields.py     HPI Designation classifier (pre-fill helper)
 ```
 
@@ -88,13 +90,50 @@ prefill_extra_fields.py     HPI Designation classifier (pre-fill helper)
 Scripts need Python 3.11 with pandas, scikit-learn and joblib (transformer
 experiments also need torch, transformers, datasets and accelerate). The
 dataset isn't in the repo; point `DATA_PATH` in `data_pipeline.py` at your
-copy of the parquet file.
+copy of the parquet file, or set `SEVERITY_DATA_PATH` instead of editing it.
 
 ```bash
 python3 severity_model.py            # trains, evaluates, saves to severity_model/
 python3 severity_model_extended.py   # extended evaluation
 python3 prefill_extra_fields.py      # HPI Designation classifier
+python3 -m pytest tests              # safety-critical checks (needs pytest; no dataset needed)
 ```
+
+### Scoring new reports
+
+```bash
+python3 predict.py reports.parquet -o scored.csv   # .csv or .parquet in and out
+```
+
+`predict.py` needs a trained `severity_model/` (run `severity_model.py` once;
+the `.joblib` files aren't committed). The input needs an `event_comments`
+column; the intake fields (`Location Name`, `Encounter Service`, age and
+medication columns) are used when present and treated as blank when absent.
+Post-investigation columns such as `manager_comments` can be in the file:
+they're dropped before scoring. Output has one row per input row, in order:
+
+| Column | Meaning |
+|---|---|
+| `event_no` | `Event No.`, if the input has it |
+| `grade` | predicted letter grade |
+| `bucket` | `none` / `some` / `serious` |
+| `p_none`, `p_some`, `p_serious` | bucket probabilities (sum to 1) |
+| `triage_score_raw` | summed E–I probability, which the cutoff applies to |
+| `triage_probability` | calibrated probability the patient was harmed |
+| `flagged` | `triage_score_raw` ≥ the cutoff frozen on September |
+
+The narrative isn't copied to the output. Scoring the raw October file this
+way reproduces `evaluation.json` exactly (recall 96.0%, precision 28.9%,
+exact-grade accuracy 76.6%).
+
+### Tests
+
+`tests/` covers the excluded-column assertion (including that leaked columns
+in an input file don't change scores), `Event No.` split decoding, the
+grade → bucket mapping, `bucket_probs` summing to 1 (including a model
+missing a grade and shuffled class order), and a save → load → score round
+trip through `predict.py`. One extra test runs against the real
+`severity_model/` when it's been trained, and is skipped otherwise.
 
 Outputs in `severity_model/`: `evaluation.json`, `extended_evaluation.json`
 and `config.json` are committed; the `.joblib` model files are gitignored.
@@ -177,15 +216,11 @@ synthetic set.
 
 ### Code improvements
 
-- [ ] **Add a prediction entry point.** The only way to score new reports is
-      `demo_predict()` in `severity_model.py`, which runs one hardcoded
-      example. Add a `predict.py` that loads `severity_model/` and scores a
-      CSV/parquet file, writing out grade, bucket, calibrated triage
-      probability and the flag.
-- [ ] **Add tests for the safety-critical pieces.** Small `pytest` checks for
-      the excluded-column assertion, `Event No.` split decoding, the grade →
-      bucket mapping, `bucket_probs` summing to 1, and a round-trip load of
-      the saved model.
+- [x] **Add a prediction entry point.** `predict.py` loads `severity_model/`
+      and scores a CSV/parquet file (see *Scoring new reports*).
+      `demo_predict()` now goes through it too.
+- [x] **Add tests for the safety-critical pieces.** `tests/`, run with
+      `python3 -m pytest tests`.
 - [ ] **Separate production code from experiments.** Move `baseline_grader.py`,
       `ordinal_vs_coarse.py`, `combined_mtl.py`, `augment_rare_grades.py` and
       `error_analysis.py` into `experiments/`, so it's obvious that

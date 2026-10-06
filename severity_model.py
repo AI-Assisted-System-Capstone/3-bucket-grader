@@ -29,9 +29,10 @@ What this script does, in order:
 5. Evaluate everything on the untouched October test set and save:
      - the trained vectorizer + model + cutoff + calibrator (severity_model/)
      - a full JSON evaluation report (severity_model/evaluation.json)
-6. Run one example report through the saved model end to end, to prove the
-   saved artifacts actually work standalone (not just in-memory objects from
-   this script's own training run).
+6. Run one example report through the saved model end to end (via
+   predict.py, the same path used to score new files), to prove the saved
+   artifacts actually work standalone (not just in-memory objects from this
+   script's own training run).
 
 Note on "multi-seed": the teammate's neural-network heads need multiple
 random seeds because their training has random initialization. TF-IDF +
@@ -101,6 +102,16 @@ def pick_cutoff_for_recall(y_true, scores, target_recall):
     idx = np.searchsorted(recall_at_k, target_recall)
     idx = min(idx, len(s_sorted) - 1)
     return float(s_sorted[idx])
+
+
+def save_model(out_dir, vectorizer, clf, calibrator, cutoff, target_recall=TARGET_RECALL):
+    """Write the four artifacts predict.load_model() reads back."""
+    os.makedirs(out_dir, exist_ok=True)
+    joblib.dump(vectorizer, f"{out_dir}/vectorizer.joblib")
+    joblib.dump(clf, f"{out_dir}/model.joblib")
+    joblib.dump(calibrator, f"{out_dir}/calibrator.joblib")
+    with open(f"{out_dir}/config.json", "w") as f:
+        json.dump({"cutoff_raw_triage": cutoff, "target_recall": target_recall}, f, indent=2)
 
 
 def main():
@@ -192,11 +203,7 @@ def main():
     with open(f"{OUT_DIR}/evaluation.json", "w") as f:
         json.dump(results, f, indent=2, default=float)
 
-    joblib.dump(vectorizer, f"{OUT_DIR}/vectorizer.joblib")
-    joblib.dump(clf, f"{OUT_DIR}/model.joblib")
-    joblib.dump(calibrator, f"{OUT_DIR}/calibrator.joblib")
-    with open(f"{OUT_DIR}/config.json", "w") as f:
-        json.dump({"cutoff_raw_triage": cutoff, "target_recall": TARGET_RECALL}, f, indent=2)
+    save_model(OUT_DIR, vectorizer, clf, calibrator, cutoff)
 
     print("\n" + "=" * 70)
     print("10-GRADE MODEL, test set")
@@ -236,11 +243,7 @@ def main():
 
 def demo_predict():
     import pandas as pd
-
-    vectorizer = joblib.load(f"{OUT_DIR}/vectorizer.joblib")
-    clf = joblib.load(f"{OUT_DIR}/model.joblib")
-    calibrator = joblib.load(f"{OUT_DIR}/calibrator.joblib")
-    cfg = json.load(open(f"{OUT_DIR}/config.json"))
+    from predict import load_model, score_reports
 
     example = pd.DataFrame([{
         "event_comments": "Patient found on floor at 0300, alert and oriented, "
@@ -254,23 +257,14 @@ def demo_predict():
         "ME - Admin - Name": None, "ME - Admin - Dose": None,
         "ADR - Suspect Med Name": None, "ADR - Dose *": None,
     }])
-    text = build_input_text(example)
-    X = vectorizer.transform(text)
-    proba = clf.predict_proba(X)
+    row = score_reports(example, load_model(OUT_DIR)).iloc[0]
 
-    grade = FULL_LABELS[clf.predict(X)[0]]
-    bucket_p = bucket_probs(proba, clf.classes_)[0]
-    bucket = LABELS[bucket_p.argmax()]
-    triage_raw = triage_score(proba, clf.classes_)[0]
-    triage_calibrated = calibrator.predict_proba([[triage_raw]])[0, 1]
-    flagged = triage_raw >= cfg["cutoff_raw_triage"]
-
-    print(f"Input: {text.iloc[0][:80]}...")
-    print(f"Predicted letter grade: {grade}")
-    print(f"Derived 3-bucket:       {bucket}")
-    print(f"Triage score (raw):     {triage_raw:.3f}")
-    print(f"Triage score (calibrated probability of harm): {triage_calibrated:.3f}")
-    print(f"Flagged for priority review: {flagged}")
+    print(f"Input: {build_input_text(example).iloc[0][:80]}...")
+    print(f"Predicted letter grade: {row['grade']}")
+    print(f"Derived 3-bucket:       {row['bucket']}")
+    print(f"Triage score (raw):     {row['triage_score_raw']:.3f}")
+    print(f"Triage score (calibrated probability of harm): {row['triage_probability']:.3f}")
+    print(f"Flagged for priority review: {row['flagged']}")
 
 
 if __name__ == "__main__":

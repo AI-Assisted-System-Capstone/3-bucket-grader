@@ -27,12 +27,17 @@ teammate's `build_input_text`. `manager_comments`, `unit_actions_taken`, and
 `shareable_lessons` are never read from disk.
 """
 
+import os
 import re
 
 import numpy as np
 import pandas as pd
 
-DATA_PATH = "/Users/devanshigupta/Downloads/Capstone Engineering Files/LOCAL_ONLY_student_facing_candidate.parquet"
+# Override with SEVERITY_DATA_PATH to point at your own copy without editing this file.
+DATA_PATH = os.environ.get(
+    "SEVERITY_DATA_PATH",
+    "/Users/devanshigupta/Downloads/Capstone Engineering Files/LOCAL_ONLY_student_facing_candidate.parquet",
+)
 
 ID_COL = "Event No."
 DATE_COL = "Event Date"
