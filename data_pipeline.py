@@ -33,10 +33,11 @@ import re
 import numpy as np
 import pandas as pd
 
-# Override with SEVERITY_DATA_PATH to point at your own copy without editing this file.
+# Default: data/ inside the repo (gitignored -- copy or symlink the sponsor's
+# parquet there). Override with SEVERITY_DATA_PATH to point anywhere else.
 DATA_PATH = os.environ.get(
     "SEVERITY_DATA_PATH",
-    "/Users/devanshigupta/Downloads/Capstone Engineering Files/LOCAL_ONLY_student_facing_candidate.parquet",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "LOCAL_ONLY_student_facing_candidate.parquet"),
 )
 
 ID_COL = "Event No."
