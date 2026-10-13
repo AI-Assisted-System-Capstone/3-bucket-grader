@@ -36,7 +36,7 @@ left hip pain. X-ray confirmed fracture. Transferred to OR for repair.
 ```
 
 TF-IDF, current production code (`severity_model.py`; the retired
-`baseline_grader.py`/`ordinal_vs_coarse.py` use the same shape without the
+`experiments/baseline_grader.py`/`experiments/ordinal_vs_coarse.py` use the same shape without the
 `token_pattern` fix below, since they predate it):
 
 ```python
@@ -61,9 +61,9 @@ three outputs.
 
 | Branch | Script | Trained against | Why it exists |
 |---|---|---|---|
-| 1 — 3 buckets | `baseline_grader.py` | `none` / `some` / `serious` | Original version of this project |
-| 2 — 10 grades | `ordinal_vs_coarse.py` | `A, B1, B2, C, D, E, F, G, H, I` | Sponsor needs the real PSRS letter, not a bucket |
-| 3 — binary | `ordinal_vs_coarse.py` | `hurt` / `not hurt` | Built once, only to check whether Branch 2's derived triage score is as good as a model built just for triage. Not a production model. |
+| 1 — 3 buckets | `experiments/baseline_grader.py` | `none` / `some` / `serious` | Original version of this project |
+| 2 — 10 grades | `experiments/ordinal_vs_coarse.py` | `A, B1, B2, C, D, E, F, G, H, I` | Sponsor needs the real PSRS letter, not a bucket |
+| 3 — binary | `experiments/ordinal_vs_coarse.py` | `hurt` / `not hurt` | Built once, only to check whether Branch 2's derived triage score is as good as a model built just for triage. Not a production model. |
 
 **Decision: Branch 2 is the one to keep — done, 2026-09-24.** `severity_model.py`
 is the finished version: trains the 10-grade model, derives the letter grade,
@@ -73,8 +73,8 @@ default target of >=95% recall (not a documented sponsor requirement),
 calibrates the triage probability (Platt scaling, to correct for training
 data oversampling harm relative to the real rate), and
 saves everything to `severity_model/` (`vectorizer.joblib`, `model.joblib`,
-`calibrator.joblib`, `config.json`, `evaluation.json`). `baseline_grader.py`
-(Branch 1) and the standalone binary model in `ordinal_vs_coarse.py`
+`calibrator.joblib`, `config.json`, `evaluation.json`). `experiments/baseline_grader.py`
+(Branch 1) and the standalone binary model in `experiments/ordinal_vs_coarse.py`
 (Branch 3) are both superseded -- kept in the repo for history, not run
 going forward.
 
@@ -414,7 +414,7 @@ matching this file and `evaluation.json`).
 
 Train has only 71 G, 130 H, 158 I rows out of 50,091 -- tried adding more
 synthetic examples for exactly these three grades to see if it helps.
-`augment_rare_grades.py` hand-writes 60 new reports (20 each) across 15
+`experiments/augment_rare_grades.py` hand-writes 60 new reports (20 each) across 15
 distinct clinical scenarios (medication overdose, wrong-site surgery, missed
 sepsis, transfusion reaction, restraint injury, anesthesia complication,
 equipment failure, pressure injury, delayed diagnosis, fall with head
@@ -577,7 +577,7 @@ loss + hurt loss).
 Their own finding: the event-type hint barely moves PR-AUC (0.466 → 0.472).
 
 **Independently verified:** rebuilt this exact architecture and ran it on our
-own data as a sanity check (`combined_mtl.py`) — got 83.1% event-type
+own data as a sanity check (`experiments/combined_mtl.py`) — got 83.1% event-type
 accuracy vs. their reported 87.3%. That's a 4-point gap, not a match — "same
 ballpark, approach clearly works in principle" is the accurate read, not
 "confirmed."
@@ -599,7 +599,7 @@ clue barely helps, within noise, same conclusion as before.
 above), not the two-versions-ago 0.77 this section originally compared
 against. Now genuinely apples-to-apples: same test set, same current
 pipeline, both numbers real. The gap is enormous either way. Full results:
-`combined_mtl_results.json`. The two pipelines stay separate because of this
+`experiments/combined_mtl_results.json`. The two pipelines stay separate because of this
 result, not by default.
 
 ---

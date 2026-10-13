@@ -87,17 +87,24 @@ prefill_extra_fields.py     HPI Designation classifier (pre-fill helper)
 
 ### Running it
 
-Scripts need Python 3.11 with pandas, scikit-learn and joblib (transformer
-experiments also need torch, transformers, datasets and accelerate). The
-dataset isn't in the repo; point `DATA_PATH` in `data_pipeline.py` at your
-copy of the parquet file, or set `SEVERITY_DATA_PATH` instead of editing it.
+Scripts need Python 3.11; `pip install -r requirements.txt` installs
+everything (the production pipeline only needs the first block). The dataset
+isn't in the repo: copy or symlink the sponsor's parquet file to
+`data/LOCAL_ONLY_student_facing_candidate.parquet` (gitignored), or set
+`SEVERITY_DATA_PATH` to its location.
 
 ```bash
 python3 severity_model.py            # trains, evaluates, saves to severity_model/
 python3 severity_model_extended.py   # extended evaluation
 python3 prefill_extra_fields.py      # HPI Designation classifier
-python3 -m pytest tests              # safety-critical checks (needs pytest; no dataset needed)
+python3 -m pytest tests              # safety-critical checks (no dataset needed)
 ```
+
+Experiments and superseded models live in `experiments/` and import the
+pipeline modules, so run them from the repo root as modules, e.g.
+`python3 -m experiments.error_analysis`. That script lists the harmed
+patients the saved production model fails to flag, with their scores and
+narratives.
 
 ### Scoring new reports
 
@@ -221,14 +228,16 @@ synthetic set.
       `demo_predict()` now goes through it too.
 - [x] **Add tests for the safety-critical pieces.** `tests/`, run with
       `python3 -m pytest tests`.
-- [ ] **Separate production code from experiments.** Move `baseline_grader.py`,
+- [x] **Separate production code from experiments.** `baseline_grader.py`,
       `ordinal_vs_coarse.py`, `combined_mtl.py`, `augment_rare_grades.py` and
-      `error_analysis.py` into `experiments/`, so it's obvious that
-      `data_pipeline.py`, `severity_model.py` and `severity_model_extended.py`
-      are the pipeline.
-- [ ] **Point `error_analysis.py` at the production model.** It was written
-      for the 3-bucket DistilBERT output. Running it on the 10-grade model
-      would make the false-negative review repeatable on what's shipped.
+      `error_analysis.py` are in `experiments/`; `data_pipeline.py`,
+      `severity_model.py`, `severity_model_extended.py` and `predict.py` are
+      the pipeline.
+- [x] **Point `error_analysis.py` at the production model.** It loads
+      `severity_model/` and applies the frozen cutoff; on October it lists the
+      16 of 403 harmed patients not flagged.
+- [x] **Add `requirements.txt`**, with versions pinned to the environment
+      the results were produced in.
 
 ### Experiments
 

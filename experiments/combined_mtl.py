@@ -23,7 +23,7 @@ Architecture mirrors the teammate's `11-buckets/src/mtl.py`:
 Data: data_pipeline.py (leakage-safe fields, real Jan-Aug/Sep/Oct split, now
 extended with the 11-bucket event_type_label alongside the 3-bucket label).
 
-Run: python3 combined_mtl.py
+Run from the repo root: python3 -m experiments.combined_mtl
 """
 
 import json
@@ -223,9 +223,9 @@ def main():
         print(f"  some recall:           {some_r[0]:.3f} +/- {some_r[1]:.3f}")
         print(f"  macro F1:              {macro_f1[0]:.3f} +/- {macro_f1[1]:.3f}")
 
-    with open("./combined_mtl_results.json", "w") as f:
+    with open("./experiments/combined_mtl_results.json", "w") as f:
         json.dump(results, f, indent=2, default=float)
-    print("\nSaved full results to ./combined_mtl_results.json")
+    print("\nSaved full results to ./experiments/combined_mtl_results.json")
 
 
 if __name__ == "__main__":
