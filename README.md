@@ -9,11 +9,14 @@ instead of reading every one. One model produces three outputs:
 - **Triage score**: a calibrated probability that the patient was harmed,
   plus a flag for priority review
 
-This repo covers the severity/triage requirement. The teammate's `11-buckets`
-repo covers event-type and recurring-theme classification. The two answer
-different sponsor requirements and stay separate.
+This repo covers the severity/triage requirement and also holds the team's
+analyst app (`analyst_app/`), which shows severity, event type, recurring
+themes, similar past reports and weekly trends to a reviewer. Event-type
+classification itself lives in the separate `11-buckets` repo.
 
-See [PIPELINE.md](PIPELINE.md) for diagrams and full per-experiment detail.
+New to the project? Start with [PROJECT_GUIDE.md](PROJECT_GUIDE.md): goal,
+status, layout, rules and who owns what. See [PIPELINE.md](PIPELINE.md) for
+diagrams and full per-experiment detail.
 
 ## Data
 
@@ -276,21 +279,27 @@ synthetic set.
       `python3 -m pytest tests`.
 - [x] **Separate production code from experiments.** `baseline_grader.py`,
       `ordinal_vs_coarse.py`, `combined_mtl.py`, `augment_rare_grades.py` and
-      `error_analysis.py` are in `experiments/`; `data_pipeline.py`,
-      `severity_model.py`, `severity_model_extended.py` and `predict.py` are
-      the pipeline.
+      `error_analysis.py` (and the DistilBERT, leakage-check and Longformer
+      experiments) are in `experiments/`; `data_pipeline.py`,
+      `severity_model.py`, `severity_model_extended.py`,
+      `rolling_evaluation.py` and `predict.py` are the pipeline.
 - [x] **Point `error_analysis.py` at the production model.** It loads
       `severity_model/` and applies the frozen cutoff; on October it lists the
       16 of 403 harmed patients not flagged.
 - [x] **Add `requirements.txt`**, with versions pinned to the environment
       the results were produced in.
+- [x] **Rolling evaluation of the serious tier.** `rolling_evaluation.py`
+      scores 303 G/H/I cases instead of October's 20 (see *Results*).
+- [x] **Bring the analyst app into this repo.** `analyst_app/` uses this
+      repo's saved severity model by default.
 
 ### Experiments
 
-- [ ] **Tune DistilBERT's `MAX_LENGTH`.** 128 tokens was a guess, never
-      checked against the dataset's token-length distribution. The 0.79
-      result likely undersells it.
-- [ ] **Train DistilBERT on all 10 grades.** It's only been run on 3 buckets.
+- [ ] **Tune DistilBERT's `MAX_LENGTH`.** 128 tokens cuts off 26.5% of
+      training reports; 256 cuts off 2.0%. The 0.79 result likely undersells
+      it. Script supports `--max-length`; not run yet (hours on a laptop GPU).
+- [ ] **Train DistilBERT on all 10 grades.** Script supports `--target grade`;
+      not run yet. It's only been run on 3 buckets.
       Deriving bucket and triage outputs the same way as production would give a
       like-for-like comparison. Its better `serious` precision makes this worth
       doing.
@@ -303,10 +312,11 @@ synthetic set.
       - `tokenizer=` → `processing_class=`
 
       This measures the leakage effect on synthetic data only.
-- [ ] **Retry the combined model on a fine-tuned encoder.** Use DistilBERT or
-      Bio_ClinicalBERT, jointly fine-tuned for event type and severity. The
-      frozen-MiniLM version was too weak to show whether the event-type clue
-      helps a stronger model.
+- [ ] **Retry the combined model on a fine-tuned encoder.** Written as
+      `experiments/combined_finetune.py` (DistilBERT, event type + 10-grade
+      severity, `--no-clue` ablation) and smoke-tested; the full runs are not
+      done. Compare against `finetune_distilbert.py --target grade` at the
+      same `--max-length`.
 - [ ] **Target the "quiet" serious misses.** Try features for hedged,
       potential-harm phrasing, or a second-stage check for reports that
       mention a high-risk medication or event but score low. Wait until the
