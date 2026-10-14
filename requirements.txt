@@ -1,0 +1,19 @@
+# Production pipeline (data_pipeline.py, severity_model.py, predict.py).
+# scikit-learn is pinned exactly: the saved severity_model/*.joblib files
+# must be loaded with the version that wrote them.
+numpy==1.26.4
+pandas==2.2.2
+pyarrow==25.0.1
+scikit-learn==1.5.1
+scipy==1.14.0
+joblib==1.4.2
+
+# Tests
+pytest>=8
+
+# DistilBERT and the experiments in experiments/
+torch==2.6.0
+transformers==4.50.3
+datasets==5.0.1
+accelerate==1.15.0
+sentence-transformers==4.0.1

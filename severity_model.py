@@ -29,9 +29,10 @@ What this script does, in order:
 5. Evaluate everything on the untouched October test set and save:
      - the trained vectorizer + model + cutoff + calibrator (severity_model/)
      - a full JSON evaluation report (severity_model/evaluation.json)
-6. Run one example report through the saved model end to end, to prove the
-   saved artifacts actually work standalone (not just in-memory objects from
-   this script's own training run).
+6. Run one example report through the saved model end to end (via
+   predict.py, the same path used to score new files), to prove the saved
+   artifacts actually work standalone (not just in-memory objects from this
+   script's own training run).
 
 Note on "multi-seed": the teammate's neural-network heads need multiple
 random seeds because their training has random initialization. TF-IDF +
@@ -70,7 +71,7 @@ from data_pipeline import (
 )
 
 OUT_DIR = "./severity_model"
-TARGET_RECALL = 0.95  # sponsor's stated hard requirement on catching true harm
+TARGET_RECALL = 0.95  # this project's own default target on catching true harm, not a sponsor requirement
 
 
 def bucket_probs(proba, classes_):
@@ -103,28 +104,51 @@ def pick_cutoff_for_recall(y_true, scores, target_recall):
     return float(s_sorted[idx])
 
 
-def main():
-    os.makedirs(OUT_DIR, exist_ok=True)
-    train_df, val_df, test_df = train_val_test()
-    print(f"Train {train_df.shape}  Val {val_df.shape}  Test {test_df.shape}")
+def save_model(out_dir, vectorizer, clf, calibrator, cutoff, target_recall=TARGET_RECALL):
+    """Write the four artifacts predict.load_model() reads back."""
+    os.makedirs(out_dir, exist_ok=True)
+    joblib.dump(vectorizer, f"{out_dir}/vectorizer.joblib")
+    joblib.dump(clf, f"{out_dir}/model.joblib")
+    joblib.dump(calibrator, f"{out_dir}/calibrator.joblib")
+    with open(f"{out_dir}/config.json", "w") as f:
+        json.dump({"cutoff_raw_triage": cutoff, "target_recall": target_recall}, f, indent=2)
 
-    # --- 1. Train ---
+
+def make_vectorizer():
     # token_pattern fixed, 2026-09-25: sklearn's default (\b\w\w+\b) requires 2+
     # word characters and drops single-character tokens, so "X-ray" tokenizes
     # to "ray" and "T-cell" to "cell" -- silently wrong words shown in
     # explanations (a Safety Officer seeing "ray" loses trust in the model),
     # and the same silent mangling happens throughout training and inference,
     # not just the explanation demo.
-    vectorizer = TfidfVectorizer(
+    return TfidfVectorizer(
         stop_words="english", max_features=20000, ngram_range=(1, 2), min_df=3,
         token_pattern=r"(?u)\b[\w-]+\b",
     )
-    X_train = vectorizer.fit_transform(train_df["text"])
-    X_val = vectorizer.transform(val_df["text"])
-    X_test = vectorizer.transform(test_df["text"])
 
+
+def fit_model(train_df, vectorizer=None):
+    """Fit the production vectorizer + 10-grade classifier on train_df.
+    Shared with rolling_evaluation.py, so every fold trains exactly what
+    production trains. Experiments pass their own unfitted `vectorizer` to
+    change the features and nothing else."""
+    if vectorizer is None:
+        vectorizer = make_vectorizer()
+    X_train = vectorizer.fit_transform(train_df["text"])
     clf = LogisticRegression(max_iter=1000, class_weight="balanced", n_jobs=-1)
     clf.fit(X_train, train_df["full_label"])
+    return vectorizer, clf
+
+
+def main():
+    os.makedirs(OUT_DIR, exist_ok=True)
+    train_df, val_df, test_df = train_val_test()
+    print(f"Train {train_df.shape}  Val {val_df.shape}  Test {test_df.shape}")
+
+    # --- 1. Train ---
+    vectorizer, clf = fit_model(train_df)
+    X_val = vectorizer.transform(val_df["text"])
+    X_test = vectorizer.transform(test_df["text"])
     print("Trained. Classes present:", [FULL_LABELS[i] for i in clf.classes_])
 
     # --- 2. Derive letter grade, 3-bucket, triage score, for val + test ---
@@ -192,11 +216,7 @@ def main():
     with open(f"{OUT_DIR}/evaluation.json", "w") as f:
         json.dump(results, f, indent=2, default=float)
 
-    joblib.dump(vectorizer, f"{OUT_DIR}/vectorizer.joblib")
-    joblib.dump(clf, f"{OUT_DIR}/model.joblib")
-    joblib.dump(calibrator, f"{OUT_DIR}/calibrator.joblib")
-    with open(f"{OUT_DIR}/config.json", "w") as f:
-        json.dump({"cutoff_raw_triage": cutoff, "target_recall": TARGET_RECALL}, f, indent=2)
+    save_model(OUT_DIR, vectorizer, clf, calibrator, cutoff)
 
     print("\n" + "=" * 70)
     print("10-GRADE MODEL, test set")
@@ -236,11 +256,7 @@ def main():
 
 def demo_predict():
     import pandas as pd
-
-    vectorizer = joblib.load(f"{OUT_DIR}/vectorizer.joblib")
-    clf = joblib.load(f"{OUT_DIR}/model.joblib")
-    calibrator = joblib.load(f"{OUT_DIR}/calibrator.joblib")
-    cfg = json.load(open(f"{OUT_DIR}/config.json"))
+    from predict import load_model, score_reports
 
     example = pd.DataFrame([{
         "event_comments": "Patient found on floor at 0300, alert and oriented, "
@@ -254,23 +270,14 @@ def demo_predict():
         "ME - Admin - Name": None, "ME - Admin - Dose": None,
         "ADR - Suspect Med Name": None, "ADR - Dose *": None,
     }])
-    text = build_input_text(example)
-    X = vectorizer.transform(text)
-    proba = clf.predict_proba(X)
+    row = score_reports(example, load_model(OUT_DIR)).iloc[0]
 
-    grade = FULL_LABELS[clf.predict(X)[0]]
-    bucket_p = bucket_probs(proba, clf.classes_)[0]
-    bucket = LABELS[bucket_p.argmax()]
-    triage_raw = triage_score(proba, clf.classes_)[0]
-    triage_calibrated = calibrator.predict_proba([[triage_raw]])[0, 1]
-    flagged = triage_raw >= cfg["cutoff_raw_triage"]
-
-    print(f"Input: {text.iloc[0][:80]}...")
-    print(f"Predicted letter grade: {grade}")
-    print(f"Derived 3-bucket:       {bucket}")
-    print(f"Triage score (raw):     {triage_raw:.3f}")
-    print(f"Triage score (calibrated probability of harm): {triage_calibrated:.3f}")
-    print(f"Flagged for priority review: {flagged}")
+    print(f"Input: {build_input_text(example).iloc[0][:80]}...")
+    print(f"Predicted letter grade: {row['grade']}")
+    print(f"Derived 3-bucket:       {row['bucket']}")
+    print(f"Triage score (raw):     {row['triage_score_raw']:.3f}")
+    print(f"Triage score (calibrated probability of harm): {row['triage_probability']:.3f}")
+    print(f"Flagged for priority review: {row['flagged']}")
 
 
 if __name__ == "__main__":

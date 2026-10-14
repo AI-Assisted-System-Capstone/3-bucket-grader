@@ -27,12 +27,18 @@ teammate's `build_input_text`. `manager_comments`, `unit_actions_taken`, and
 `shareable_lessons` are never read from disk.
 """
 
+import os
 import re
 
 import numpy as np
 import pandas as pd
 
-DATA_PATH = "/Users/devanshigupta/Downloads/Capstone Engineering Files/LOCAL_ONLY_student_facing_candidate.parquet"
+# Default: data/ inside the repo (gitignored -- copy or symlink the sponsor's
+# parquet there). Override with SEVERITY_DATA_PATH to point anywhere else.
+DATA_PATH = os.environ.get(
+    "SEVERITY_DATA_PATH",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "LOCAL_ONLY_student_facing_candidate.parquet"),
+)
 
 ID_COL = "Event No."
 DATE_COL = "Event Date"
@@ -181,6 +187,34 @@ def split_from_event_no(event_no):
     return m.group(1)
 
 
+def assert_months_match_splits(df):
+    """Every TRAIN month must come before every VALIDATION month, and every
+    VALIDATION month before every TEST month."""
+    spans = df.groupby("split")["event_month"].agg(["min", "max"])
+    present = [s for s in ("TRAIN", "VALIDATION", "TEST") if s in spans.index]
+    for earlier, later in zip(present, present[1:]):
+        if spans.loc[earlier, "max"] >= spans.loc[later, "min"]:
+            raise DataContractError(
+                f"{earlier} runs to {spans.loc[earlier, 'max']} but {later} starts "
+                f"{spans.loc[later, 'min']}: Event Date disagrees with the Event No. split")
+
+
+def rolling_folds(df, min_train_months=1):
+    """Yield (train_df, cutoff_df, test_df) for a rolling evaluation with an
+    expanding window: train on every month up to k-2, pick the cutoff on
+    month k-1, test on month k. Same shape as the production split, so the
+    last fold IS the production split (Jan-Aug / Sep / Oct). Each month is a
+    test month at most once.
+    """
+    months = sorted(df["event_month"].unique())
+    for k in range(min_train_months + 1, len(months)):
+        yield (
+            df[df["event_month"].isin(months[:k - 1])].reset_index(drop=True),
+            df[df["event_month"] == months[k - 1]].reset_index(drop=True),
+            df[df["event_month"] == months[k]].reset_index(drop=True),
+        )
+
+
 def build_input_text(features):
     """'Unit: X. Service: Y. ...' prefix + narrative. No post-investigation fields."""
     assert_no_excluded_columns(features.columns)
@@ -253,12 +287,21 @@ def load_dataset(path=DATA_PATH):
     df["location_name"] = df["Location Name"]
     df["age_band"] = df["Age at Encounter"].map(age_band)
 
+    # Calendar month of the event ("2024-03"), for rolling_folds() only --
+    # never model input. Must agree with the Event No. split, since both
+    # claim to describe the same date split.
+    event_date = pd.to_datetime(df[DATE_COL], errors="coerce")
+    if event_date.isna().any():
+        raise DataContractError(f"{int(event_date.isna().sum())} reports with a missing or unparseable {DATE_COL!r}")
+    df["event_month"] = event_date.dt.strftime("%Y-%m")
+    assert_months_match_splits(df)
+
     return df[
         ["event_no" if "event_no" in df.columns else ID_COL, "split", "bucket", "label",
          "grade", "full_label", "hurt_label",
          "event_bucket", "event_type_label",
          "report_type_label", "hpi_label",
-         "encounter_service", "location_name", "age_band",
+         "encounter_service", "location_name", "age_band", "event_month",
          "text"]
     ].rename(columns={ID_COL: "event_no"})
 

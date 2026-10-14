@@ -36,7 +36,7 @@ left hip pain. X-ray confirmed fracture. Transferred to OR for repair.
 ```
 
 TF-IDF, current production code (`severity_model.py`; the retired
-`baseline_grader.py`/`ordinal_vs_coarse.py` use the same shape without the
+`experiments/baseline_grader.py`/`experiments/ordinal_vs_coarse.py` use the same shape without the
 `token_pattern` fix below, since they predate it):
 
 ```python
@@ -61,9 +61,9 @@ three outputs.
 
 | Branch | Script | Trained against | Why it exists |
 |---|---|---|---|
-| 1 — 3 buckets | `baseline_grader.py` | `none` / `some` / `serious` | Original version of this project |
-| 2 — 10 grades | `ordinal_vs_coarse.py` | `A, B1, B2, C, D, E, F, G, H, I` | Sponsor needs the real PSRS letter, not a bucket |
-| 3 — binary | `ordinal_vs_coarse.py` | `hurt` / `not hurt` | Built once, only to check whether Branch 2's derived triage score is as good as a model built just for triage. Not a production model. |
+| 1 — 3 buckets | `experiments/baseline_grader.py` | `none` / `some` / `serious` | Original version of this project |
+| 2 — 10 grades | `experiments/ordinal_vs_coarse.py` | `A, B1, B2, C, D, E, F, G, H, I` | Sponsor needs the real PSRS letter, not a bucket |
+| 3 — binary | `experiments/ordinal_vs_coarse.py` | `hurt` / `not hurt` | Built once, only to check whether Branch 2's derived triage score is as good as a model built just for triage. Not a production model. |
 
 **Decision: Branch 2 is the one to keep — done, 2026-09-24.** `severity_model.py`
 is the finished version: trains the 10-grade model, derives the letter grade,
@@ -73,8 +73,8 @@ default target of >=95% recall (not a documented sponsor requirement),
 calibrates the triage probability (Platt scaling, to correct for training
 data oversampling harm relative to the real rate), and
 saves everything to `severity_model/` (`vectorizer.joblib`, `model.joblib`,
-`calibrator.joblib`, `config.json`, `evaluation.json`). `baseline_grader.py`
-(Branch 1) and the standalone binary model in `ordinal_vs_coarse.py`
+`calibrator.joblib`, `config.json`, `evaluation.json`). `experiments/baseline_grader.py`
+(Branch 1) and the standalone binary model in `experiments/ordinal_vs_coarse.py`
 (Branch 3) are both superseded -- kept in the repo for history, not run
 going forward.
 
@@ -172,7 +172,7 @@ reproduces the expected grade, bucket, and flag decision.
 ### Sponsor-facing review, round 1 (2026-09-25)
 
 A detailed review raised six concrete gaps, addressed as far as possible
-without sponsor input. `leakage_inflation_check.py`, `severity_model_extended.py`,
+without sponsor input. `experiments/leakage_inflation_check.py`, `severity_model_extended.py`,
 and `prefill_extra_fields.py` were added; `data_pipeline.py` now handles a
 `Deleted` harm score gracefully and cites the sponsor's own code for the
 B1-before-B2 grade ordering.
@@ -414,7 +414,7 @@ matching this file and `evaluation.json`).
 
 Train has only 71 G, 130 H, 158 I rows out of 50,091 -- tried adding more
 synthetic examples for exactly these three grades to see if it helps.
-`augment_rare_grades.py` hand-writes 60 new reports (20 each) across 15
+`experiments/augment_rare_grades.py` hand-writes 60 new reports (20 each) across 15
 distinct clinical scenarios (medication overdose, wrong-site surgery, missed
 sepsis, transfusion reaction, restraint injury, anesthesia complication,
 equipment failure, pressure injury, delayed diagnosis, fall with head
@@ -507,7 +507,7 @@ Both were flagged for a long time as "not yet re-run on the current pipeline"
 environment needed `datasets` and `accelerate` installed (missing from the
 3.11 env; installed via pip, no other environment issues).
 
-**DistilBERT, fine-tuned end-to-end on the 3-bucket label** (`finetune_distilbert.py`,
+**DistilBERT, fine-tuned end-to-end on the 3-bucket label** (`experiments/finetune_distilbert.py`,
 ~44 min on Apple GPU/MPS): macro F1 **0.79** on the frozen October test set.
 
 | | none | some | serious |
@@ -538,6 +538,74 @@ just a stale-cache artifact").
 Not committed yet; `distilbert_output/` is gitignored (768MB of checkpoints)
 and `test_results.json` inside it is the only file worth keeping — not yet
 copied anywhere durable.
+
+### Rolling evaluation: the serious tier on 303 cases instead of 20 (Alana, 2026-10-13)
+
+Every claim about G/H/I so far rests on October's 20 cases, too few to tell
+whether a change helps or hurts them. `rolling_evaluation.py` repeats the
+production split shape with an expanding window: train on months up to k-2,
+pick the >=95%-recall cutoff on month k-1, freeze it, test on month k. With
+January as the smallest training set that is 8 folds testing March-October,
+and every report in those months is scored once by a model that never saw its
+month. The last fold is the production split, and the script asserts that it
+reproduces the saved cutoff (0.2361).
+
+Supporting changes: `data_pipeline.py` now carries `event_month` (from
+`Event Date`, splitting only, never a feature), checks that months agree with
+the `Event No.` split, and provides `rolling_folds()`. `severity_model.py`'s
+training moved into `fit_model()` so each fold trains exactly what production
+trains; `evaluation.json` and `config.json` were unchanged after the refactor.
+
+The committed JSON was regenerated from this repo's saved model and pinned
+environment. Alana's original run matched it on every pooled count (297/303
+flagged, 157/303 labelled `serious`); per-grade splits and fold cutoffs
+differed in the third or fourth decimal, consistent with a different
+scikit-learn build.
+
+Pooled over 303 serious cases (69 G, 112 H, 122 I -- the first evaluation of
+grade I at all, since October has none):
+
+| | Count | Rate | Wilson 95% |
+|---|---|---|---|
+| Flagged by the triage cutoff | 297 / 303 | 98.0% | 95.7-99.1% |
+| Labelled `serious` by the derived bucket | 157 / 303 | 51.8% | 46.2-57.4% |
+| ... grade G | 13 / 69 | 18.8% | 11.4-29.6% |
+| ... grade H | 76 / 112 | 67.9% | 58.7-75.8% |
+| ... grade I | 68 / 122 | 55.7% | 46.9-64.2% |
+| Outscore 95% of the month's unharmed reports | 277 / 303 | 91.4% | 87.7-94.1% |
+
+Per fold (`serious` label recall rises with training size; the triage flag
+does not):
+
+| Test month | Train reports | Cutoff | Serious flagged | Labelled `serious` |
+|---|---|---|---|---|
+| Mar | 6,383 | 0.283 | 45/46 | 13/46 (28%) |
+| Apr | 12,702 | 0.267 | 47/47 | 18/47 (38%) |
+| May | 19,280 | 0.221 | 29/29 | 15/29 (52%) |
+| Jun | 25,722 | 0.208 | 37/39 | 25/39 (64%) |
+| Jul | 32,006 | 0.249 | 57/58 | 32/58 (55%) |
+| Aug | 37,779 | 0.239 | 48/48 | 30/48 (62%) |
+| Sep | 43,536 | 0.252 | 16/16 | 9/16 (56%) |
+| Oct | 50,091 | 0.236 | 18/20 | 15/20 (75%) |
+
+What this does and does not show:
+
+- **It is a development metric, not a second test set.** Jan-Aug informed
+  every modelling choice. October alone remains the final check.
+- **Triage flagging of serious cases is near its ceiling** (6 misses in 303),
+  so that number cannot distinguish candidate models. The `serious` label
+  (146 misses) and the catch rate at a fixed 5% false-alarm rate (26 misses)
+  can. Later experiments should report those, paired on the same cases with
+  `compare()`.
+- **Grade G is rarely labelled `serious`** (19%), though almost always
+  flagged. Not visible before with 6 October G cases.
+- **Precision and flag rate are per-fold only.** Jan-Aug oversamples harm
+  (14.6-15.8% of test-month reports vs. 4.1% and 4.8% in Sep and Oct), so
+  precision there (46-58%) is not comparable to Sep/Oct (28-29%).
+- **Are the oversampled months easier?** Serious flagged: 263/267 (98.5%,
+  CI 96.2-99.4%) in Mar-Aug vs. 34/36 (94.4%, CI 81.9-98.5%) in Sep-Oct. The
+  direction fits October's "quiet" misses being under-represented in Jan-Aug,
+  but the intervals overlap; not established.
 
 ---
 
@@ -577,7 +645,7 @@ loss + hurt loss).
 Their own finding: the event-type hint barely moves PR-AUC (0.466 → 0.472).
 
 **Independently verified:** rebuilt this exact architecture and ran it on our
-own data as a sanity check (`combined_mtl.py`) — got 83.1% event-type
+own data as a sanity check (`experiments/combined_mtl.py`) — got 83.1% event-type
 accuracy vs. their reported 87.3%. That's a 4-point gap, not a match — "same
 ballpark, approach clearly works in principle" is the accurate read, not
 "confirmed."
@@ -599,7 +667,7 @@ clue barely helps, within noise, same conclusion as before.
 above), not the two-versions-ago 0.77 this section originally compared
 against. Now genuinely apples-to-apples: same test set, same current
 pipeline, both numbers real. The gap is enormous either way. Full results:
-`combined_mtl_results.json`. The two pipelines stay separate because of this
+`experiments/combined_mtl_results.json`. The two pipelines stay separate because of this
 result, not by default.
 
 ---

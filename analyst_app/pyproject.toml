@@ -1,0 +1,7 @@
+[tool.ruff]
+target-version = "py39"
+line-length = 100
+include = ["backend/**/*.py", "integrations/**/*.py", "tests/test_integration.py"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
