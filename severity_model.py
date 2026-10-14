@@ -70,7 +70,7 @@ from data_pipeline import (
 )
 
 OUT_DIR = "./severity_model"
-TARGET_RECALL = 0.95  # sponsor's stated hard requirement on catching true harm
+TARGET_RECALL = 0.95  # this project's own default target on catching true harm, not a sponsor requirement
 
 
 def bucket_probs(proba, classes_):
@@ -103,28 +103,41 @@ def pick_cutoff_for_recall(y_true, scores, target_recall):
     return float(s_sorted[idx])
 
 
-def main():
-    os.makedirs(OUT_DIR, exist_ok=True)
-    train_df, val_df, test_df = train_val_test()
-    print(f"Train {train_df.shape}  Val {val_df.shape}  Test {test_df.shape}")
-
-    # --- 1. Train ---
+def make_vectorizer():
     # token_pattern fixed, 2026-09-25: sklearn's default (\b\w\w+\b) requires 2+
     # word characters and drops single-character tokens, so "X-ray" tokenizes
     # to "ray" and "T-cell" to "cell" -- silently wrong words shown in
     # explanations (a Safety Officer seeing "ray" loses trust in the model),
     # and the same silent mangling happens throughout training and inference,
     # not just the explanation demo.
-    vectorizer = TfidfVectorizer(
+    return TfidfVectorizer(
         stop_words="english", max_features=20000, ngram_range=(1, 2), min_df=3,
         token_pattern=r"(?u)\b[\w-]+\b",
     )
-    X_train = vectorizer.fit_transform(train_df["text"])
-    X_val = vectorizer.transform(val_df["text"])
-    X_test = vectorizer.transform(test_df["text"])
 
+
+def fit_model(train_df, vectorizer=None):
+    """Fit the production vectorizer + 10-grade classifier on train_df.
+    Shared with rolling_evaluation.py, so every fold trains exactly what
+    production trains. Experiments pass their own unfitted `vectorizer` to
+    change the features and nothing else."""
+    if vectorizer is None:
+        vectorizer = make_vectorizer()
+    X_train = vectorizer.fit_transform(train_df["text"])
     clf = LogisticRegression(max_iter=1000, class_weight="balanced", n_jobs=-1)
     clf.fit(X_train, train_df["full_label"])
+    return vectorizer, clf
+
+
+def main():
+    os.makedirs(OUT_DIR, exist_ok=True)
+    train_df, val_df, test_df = train_val_test()
+    print(f"Train {train_df.shape}  Val {val_df.shape}  Test {test_df.shape}")
+
+    # --- 1. Train ---
+    vectorizer, clf = fit_model(train_df)
+    X_val = vectorizer.transform(val_df["text"])
+    X_test = vectorizer.transform(test_df["text"])
     print("Trained. Classes present:", [FULL_LABELS[i] for i in clf.classes_])
 
     # --- 2. Derive letter grade, 3-bucket, triage score, for val + test ---

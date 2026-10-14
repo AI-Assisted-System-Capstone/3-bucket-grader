@@ -9,6 +9,11 @@ combine only at the very end, in the final per-report record.
   repo, answering the sponsor's "group reports into recurring safety themes"
   requirement.
 
+File locations: `baseline_grader.py`, `ordinal_vs_coarse.py`,
+`combined_mtl.py`, `augment_rare_grades.py`, `finetune_distilbert.py`,
+`leakage_inflation_check.py` and `longformer_colab.ipynb` are named below
+without a path; they now live in `experiments/`.
+
 ---
 
 ## Severity pipeline
@@ -538,6 +543,73 @@ just a stale-cache artifact").
 Not committed yet; `distilbert_output/` is gitignored (768MB of checkpoints)
 and `test_results.json` inside it is the only file worth keeping — not yet
 copied anywhere durable.
+
+### Rolling evaluation: the serious tier on 303 cases instead of 20 (2026-10-06)
+
+Every claim about G/H/I so far rests on October's 20 cases, too few to tell
+whether a change helps or hurts them. `rolling_evaluation.py` repeats the
+production split shape with an expanding window: train on months up to k-2,
+pick the >=95%-recall cutoff on month k-1, freeze it, test on month k. With
+January as the smallest training set that is 8 folds testing March-October,
+and every report in those months is scored once by a model that never saw its
+month. The last fold is the production split, and the script asserts that it
+reproduces the saved cutoff (0.2362).
+
+Supporting changes: `data_pipeline.py` now carries `event_month` (from
+`Event Date`, splitting only, never a feature), checks that months agree with
+the `Event No.` split, and provides `rolling_folds()`. `severity_model.py`'s
+training moved into `fit_model()` so each fold trains exactly what production
+trains; `evaluation.json` and `config.json` were byte-identical after the
+refactor.
+
+Pooled over 303 serious cases (69 G, 112 H, 122 I -- the first evaluation of
+grade I at all, since October has none):
+
+| | Count | Rate | Wilson 95% |
+|---|---|---|---|
+| Flagged by the triage cutoff | 297 / 303 | 98.0% | 95.7-99.1% |
+| Labelled `serious` by the derived bucket | 157 / 303 | 51.8% | 46.2-57.4% |
+| ... grade G | 14 / 69 | 20.3% | 12.5-31.2% |
+| ... grade H | 75 / 112 | 67.0% | 57.8-75.0% |
+| ... grade I | 68 / 122 | 55.7% | 46.9-64.2% |
+| Outscore 95% of the month's unharmed reports | 276 / 303 | 91.1% | 87.3-93.8% |
+
+Per fold (`serious` label recall rises with training size; the triage flag
+does not):
+
+| Test month | Train reports | Cutoff | Serious flagged | Labelled `serious` |
+|---|---|---|---|---|
+| Mar | 6,383 | 0.283 | 45/46 | 13/46 (28%) |
+| Apr | 12,702 | 0.268 | 47/47 | 18/47 (38%) |
+| May | 19,280 | 0.221 | 29/29 | 15/29 (52%) |
+| Jun | 25,722 | 0.210 | 37/39 | 26/39 (67%) |
+| Jul | 32,006 | 0.251 | 57/58 | 31/58 (53%) |
+| Aug | 37,779 | 0.240 | 48/48 | 30/48 (62%) |
+| Sep | 43,536 | 0.251 | 16/16 | 9/16 (56%) |
+| Oct | 50,091 | 0.236 | 18/20 | 15/20 (75%) |
+
+What this does and does not show:
+
+- **It is a development metric, not a second test set.** Jan-Aug informed
+  every modelling choice. October alone remains the final check.
+- **Triage flagging of serious cases is near its ceiling** (6 misses in 303),
+  so that number cannot distinguish candidate models. The `serious` label
+  (146 misses) and the catch rate at a fixed 5% false-alarm rate (27 misses)
+  can. Later experiments should report those, paired on the same cases with
+  `compare()`.
+- **Grade G is rarely labelled `serious`** (20%), though almost always
+  flagged. Not visible before with 6 October G cases.
+- **Pooled `serious`-label recall understates production**, because early
+  folds train on far less data.
+- **Precision and flag rate are per-fold only.** Jan-Aug oversamples harm
+  (14.6-15.8% of test-month reports vs. 4.1% and 4.8% in Sep and Oct), so
+  precision there (46-58%) is not comparable to Sep/Oct (28-29%).
+- **Are the oversampled months easier?** Serious flagged: 263/267 (98.5%,
+  CI 96.2-99.4%) in Mar-Aug vs. 34/36 (94.4%, CI 81.9-98.5%) in Sep-Oct. The
+  direction fits October's "quiet" misses being under-represented in Jan-Aug,
+  but the intervals overlap; not established.
+- **The 2 October misses match production** (18/20 flagged, 15/20 labelled
+  `serious` = the 0.75 recall in `evaluation.json`).
 
 ---
 

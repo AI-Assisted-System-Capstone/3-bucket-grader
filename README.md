@@ -49,9 +49,10 @@ The model only reads what's available when a report is submitted:
 
 These fields are **never** used, because they're filled in after a safety
 officer reviews the report and would leak the answer:
-`manager_comments`, `unit_actions_taken`, `shareable_lessons`, and
-`Analyst-Report Type`. `data_pipeline.py` asserts on every load that the
-first three never reach the model.
+`manager_comments`, `unit_actions_taken`, `shareable_lessons`,
+`HPI Designation`, `Analyst-Report Type`, and Level of Investigation
+(`Level of Invet`). These are the `EXCLUDED_COLUMNS` in `data_pipeline.py`,
+which asserts on every load that none of the six reach the model.
 
 ## Workflow
 
@@ -63,6 +64,11 @@ severity_model.py           train TF-IDF + LogReg on 10 grades → derive bucket
         │
 severity_model_extended.py  sponsor comparison, operating-point menu, per-day recall@k,
         │                   subgroup breakdown with confidence intervals, explanations
+        │
+error_analysis.py           lists the harmed October reports the triage cutoff misses
+        │
+rolling_evaluation.py       retrains month by month (test Mar–Oct) to score 303 serious
+        │                   cases instead of October's 20; a development metric
         │
 prefill_extra_fields.py     HPI Designation classifier (pre-fill helper)
 ```
@@ -94,10 +100,50 @@ copy of the parquet file.
 python3 severity_model.py            # trains, evaluates, saves to severity_model/
 python3 severity_model_extended.py   # extended evaluation
 python3 prefill_extra_fields.py      # HPI Designation classifier
+python3 error_analysis.py            # reviews the harmed test reports the model misses
+python3 rolling_evaluation.py        # month-by-month evaluation of the serious tier (a few minutes)
+python3 predict.py reports.csv       # scores new reports with the saved model
 ```
 
-Outputs in `severity_model/`: `evaluation.json`, `extended_evaluation.json`
-and `config.json` are committed; the `.joblib` model files are gitignored.
+`predict.py` takes a CSV or parquet file with the intake columns listed above
+and writes one row per report: letter grade, 3-bucket label, raw and
+calibrated triage score, and the priority-review flag. Use `-o` to choose the
+output file (default `<input name>_predictions.csv`).
+
+Retired and one-off experiment scripts live in `experiments/` (see its
+[README](experiments/README.md)). Run them as modules from the repo root, for
+example `python3 -m experiments.baseline_grader`.
+
+### Tests
+
+```bash
+python3 -m pytest
+```
+
+Needs `pytest` installed. The tests check the pieces where a bug would give
+wrong results without crashing:
+
+- **Leakage guard:** each excluded column is rejected before it can reach the
+  model input.
+- **Date split:** `Event No.` prefixes decode to the right split, and
+  malformed IDs raise an error.
+- **Grade → bucket mapping:** all ten grades are in order and map to the right
+  bucket.
+- **Probability sums:** the bucket probabilities sum to 1, and the triage
+  score equals `some` + `serious`.
+- **Rolling folds:** each fold trains only on months before its cutoff and
+  test months, no report is tested twice, and the last fold is the production
+  split.
+- **Saved model:** the files in `severity_model/` load from disk and score
+  reports through `predict.py`, and post-review columns in the input don't
+  change the scores.
+
+None of the tests read the dataset. The saved-model tests are skipped until
+`severity_model.py` has been run, because the `.joblib` files aren't in the
+repo.
+
+Outputs in `severity_model/`: `evaluation.json`, `extended_evaluation.json`,
+`rolling_evaluation.json` and `config.json` are committed; the `.joblib` model files are gitignored.
 
 ## Results
 
@@ -128,6 +174,44 @@ kappa 0.72.
 
 Macro F1: 0.82.
 
+### Serious tier, rolling evaluation (development metric)
+
+October has only 20 G/H/I cases, so `rolling_evaluation.py` repeats the
+production split month by month: train on all earlier months, pick the cutoff
+on the next month, test on the month after. Testing March through October
+scores **303 serious cases**, each by a model that never saw its month. The
+last fold is the production split and reproduces its cutoff. Numbers are from
+`severity_model/rolling_evaluation.json`.
+
+| G/H/I cases | Flagged by triage cutoff | Labelled `serious` |
+|---|---|---|
+| All, Mar–Oct | 297 / 303 = 98.0% (95% CI 95.7–99.1%) | 157 / 303 = 51.8% (46.2–57.4%) |
+| Grade G | 68 / 69 = 98.6% | 14 / 69 = 20.3% (12.5–31.2%) |
+| Grade H | 109 / 112 = 97.3% | 75 / 112 = 67.0% (57.8–75.0%) |
+| Grade I | 120 / 122 = 98.4% | 68 / 122 = 55.7% (46.9–64.2%) |
+| Mar–Aug only (oversampled months) | 263 / 267 = 98.5% (96.2–99.4%) | 133 / 267 = 49.8% |
+| Sep–Oct only (natural harm rate) | 34 / 36 = 94.4% (81.9–98.5%) | 24 / 36 = 66.7% |
+
+How to read it:
+
+- **Use it to compare models, not as a headline.** January–August informed
+  every modelling choice, so October alone is still the final test.
+- **The triage cutoff is close to its ceiling on this tier** (6 misses in
+  303), so it can't show much improvement. The `serious` label (146 misses)
+  and the share of serious cases caught at a 5% false-alarm rate
+  (276 / 303 = 91.1%) leave more room.
+- **The `serious` label is the weak spot, grade G most of all.** Four of five
+  permanent-harm reports are flagged for review but not labelled `serious`.
+- **The `serious` label needs training data.** It labels 28% of serious cases
+  correctly in the March fold (trained on January alone) and 53–75% in the
+  last five folds, so the pooled 51.8% understates the production model.
+- **Precision and flag rate are not pooled.** January–August oversamples harm
+  (about 15% of reports versus 4–5% in September and October), which inflates
+  both; the per-fold values are in the JSON.
+- **March–August may be slightly easier than a natural month.** 98.5% versus
+  94.4% flagged, but with 36 natural-rate cases the intervals overlap and the
+  gap can't be confirmed.
+
 ### Compared with the sponsor's model
 
 The sponsor reported sensitivity (the same thing as recall) at a fixed
@@ -155,7 +239,8 @@ synthetic set.
   scores ≥0.350, while October's misses score 0.152–0.310.
 - **The serious tier is tiny.** 20 test cases (6 G, 14 H, 0 I) and 16 validation
   cases, so `serious` metrics have wide confidence intervals and grade I isn't
-  evaluated at all.
+  evaluated at all. The rolling evaluation above covers 303 cases (122 grade
+  I) as a development metric.
 - **Rare grades are weak on their own.** B1 F1 is 0.21 and G F1 is 0.55. The
   letter-grade macro F1 is 0.59, versus 0.82 once grades are grouped into
   buckets.
@@ -177,23 +262,24 @@ synthetic set.
 
 ### Code improvements
 
-- [ ] **Add a prediction entry point.** The only way to score new reports is
-      `demo_predict()` in `severity_model.py`, which runs one hardcoded
-      example. Add a `predict.py` that loads `severity_model/` and scores a
-      CSV/parquet file, writing out grade, bucket, calibrated triage
-      probability and the flag.
-- [ ] **Add tests for the safety-critical pieces.** Small `pytest` checks for
-      the excluded-column assertion, `Event No.` split decoding, the grade →
-      bucket mapping, `bucket_probs` summing to 1, and a round-trip load of
-      the saved model.
-- [ ] **Separate production code from experiments.** Move `baseline_grader.py`,
-      `ordinal_vs_coarse.py`, `combined_mtl.py`, `augment_rare_grades.py` and
-      `error_analysis.py` into `experiments/`, so it's obvious that
-      `data_pipeline.py`, `severity_model.py` and `severity_model_extended.py`
-      are the pipeline.
-- [ ] **Point `error_analysis.py` at the production model.** It was written
-      for the 3-bucket DistilBERT output. Running it on the 10-grade model
-      would make the false-negative review repeatable on what's shipped.
+- [x] **Add a prediction entry point.** `predict.py` loads `severity_model/`
+      and scores a CSV/parquet file, writing out grade, bucket, calibrated
+      triage probability and the flag.
+- [x] **Add tests for the safety-critical pieces.** `tests/` has `pytest`
+      checks for the excluded-column assertion, `Event No.` split decoding,
+      the grade → bucket mapping, `bucket_probs` summing to 1, and a
+      round-trip load of the saved model.
+- [x] **Separate production code from experiments.** `baseline_grader.py`,
+      `ordinal_vs_coarse.py`, `combined_mtl.py`, `augment_rare_grades.py`,
+      `finetune_distilbert.py`, `leakage_inflation_check.py` and
+      `longformer_colab.ipynb` now live in
+      `experiments/`, so it's obvious that `data_pipeline.py`,
+      `severity_model.py` and `severity_model_extended.py` are the pipeline.
+- [x] **Point `error_analysis.py` at the production model.** It was written
+      for the 3-bucket DistilBERT output. It now loads the saved 10-grade
+      model and reviews the harmed reports the triage cutoff misses, so the
+      false-negative review is repeatable on what's shipped. It moved back
+      to the repo root for that reason.
 
 ### Experiments
 

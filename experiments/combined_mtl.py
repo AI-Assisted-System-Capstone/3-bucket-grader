@@ -23,7 +23,7 @@ Architecture mirrors the teammate's `11-buckets/src/mtl.py`:
 Data: data_pipeline.py (leakage-safe fields, real Jan-Aug/Sep/Oct split, now
 extended with the 11-bucket event_type_label alongside the 3-bucket label).
 
-Run: python3 combined_mtl.py
+Run from the repo root: python3 -m experiments.combined_mtl
 """
 
 import json
