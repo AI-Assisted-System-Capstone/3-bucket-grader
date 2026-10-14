@@ -1,0 +1,43 @@
+# Local Python environment and caches
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.DS_Store
+
+# Secrets and machine-local configuration
+.env
+.env.*
+
+# MIDAS data must remain local
+data/*
+!data/README.md
+*.csv
+*.tsv
+*.xls
+*.xlsx
+*.jsonl
+*.ndjson
+
+# Generated reports, embeddings, and visualizations
+output/
+output_*/
+*.npy
+*.npz
+
+# Local MVP state and trusted model artifacts (never commit)
+local_state/
+upstream/
+artifacts/
+*.sqlite*
+*.db
+*.joblib
+*.pt
+*.pth
+*.parquet
+node_modules/
+frontend/dist/
+playwright-report/
+test-results/
