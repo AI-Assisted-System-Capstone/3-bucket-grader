@@ -133,8 +133,8 @@ in your shell. Paths may be absolute or relative to the repo root.
 |---|---|
 | MIDAS_DATABASE | local_state/midas.sqlite3; use a separate demo database |
 | MIDAS_FIXTURE_MODE | false; true explicitly enables synthetic classifier fixtures |
-| MIDAS_SEVERITY_REPO | local 3-bucket-grader checkout path |
-| MIDAS_SEVERITY_ARTIFACTS | its trusted severity_model directory |
+| MIDAS_SEVERITY_REPO | this repo (the folder above analyst_app/) by default |
+| MIDAS_SEVERITY_ARTIFACTS | its severity_model/ by default; run `python3 severity_model.py` there first |
 | MIDAS_EVENT_TYPE_REPO | local 11-buckets checkout path |
 | MIDAS_EVENT_TYPE_ARTIFACTS | its trusted outputs/baseline directory |
 | MIDAS_EMBEDDING_BACKEND | minilm; lexical only for smoke tests |

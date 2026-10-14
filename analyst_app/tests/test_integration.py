@@ -354,6 +354,8 @@ class APITests(unittest.TestCase):
         settings = Settings(
             database=str(Path(self.folder.name) / "missing.db"),
             embedding_backend="lexical",
+            severity_repo="",
+            severity_artifacts="",
         )
         with TestClient(create_app(settings)) as client:
             r = client.post("/api/events", json=event().model_dump(mode="json"))

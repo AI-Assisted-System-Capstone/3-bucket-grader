@@ -1,15 +1,20 @@
 import os
+from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, Field
+
+
+# analyst_app/ lives inside the severity repo, so its model is the default.
+SEVERITY_REPO = Path(__file__).resolve().parents[2]
 
 
 class Settings(BaseModel):
     database: str = "local_state/midas.sqlite3"
     fixture_mode: bool = False
     embedding_backend: Literal["minilm", "lexical"] = "minilm"
-    severity_repo: str = ""
-    severity_artifacts: str = ""
+    severity_repo: str = str(SEVERITY_REPO)
+    severity_artifacts: str = str(SEVERITY_REPO / "severity_model")
     event_type_repo: str = ""
     event_type_artifacts: str = ""
     top_n: int = Field(default=5, ge=1, le=10000)
