@@ -15,7 +15,7 @@ hidden state:
     The clue's effect is the difference between the two runs.
 Loss = event loss + severity loss, equal weights, both class-weighted.
 
-The single-task baseline is finetune_distilbert.py --target grade at the same
+The single-task baseline is experiments/finetune_distilbert.py --target grade at the same
 --max-length. Severity outputs are scored by finetune_distilbert.evaluate()
 (bucket and triage derived the production way, cutoff and calibration fit on
 September, everything reported on October), so the three runs compare
@@ -44,7 +44,7 @@ from sklearn.metrics import accuracy_score, classification_report
 from transformers import AutoModel, AutoTokenizer, get_linear_schedule_with_warmup
 
 from data_pipeline import EVENT_BUCKETS, FULL_LABELS, LABELS, N_EVENT_CLASSES, UNLABELED, train_val_test
-from finetune_distilbert import GRADE_TO_BUCKET, MODEL_NAME, OUT_DIR, RESULTS_DIR, evaluate, print_summary
+from experiments.finetune_distilbert import GRADE_TO_BUCKET, MODEL_NAME, OUT_DIR, RESULTS_DIR, evaluate, print_summary
 
 N_GRADES = len(FULL_LABELS)
 

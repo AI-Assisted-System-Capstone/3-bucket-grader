@@ -49,9 +49,10 @@ The model only reads what's available when a report is submitted:
 
 These fields are **never** used, because they're filled in after a safety
 officer reviews the report and would leak the answer:
-`manager_comments`, `unit_actions_taken`, `shareable_lessons`, and
-`Analyst-Report Type`. `data_pipeline.py` asserts on every load that the
-first three never reach the model.
+`manager_comments`, `unit_actions_taken`, `shareable_lessons`,
+`HPI Designation`, `Analyst-Report Type`, and Level of Investigation
+(`Level of Invet`). These are the `EXCLUDED_COLUMNS` in `data_pipeline.py`,
+which asserts on every load that none of the six reach the model.
 
 ## Workflow
 
@@ -63,6 +64,9 @@ severity_model.py           train TF-IDF + LogReg on 10 grades → derive bucket
         │
 severity_model_extended.py  sponsor comparison, operating-point menu, per-day recall@k,
         │                   subgroup breakdown with confidence intervals, explanations
+        │
+rolling_evaluation.py       retrains month by month (test Mar–Oct) to score 303 serious
+        │                   cases instead of October's 20; a development metric
         │
 predict.py                  load severity_model/ → score a CSV/parquet of new reports
         │
@@ -96,15 +100,15 @@ isn't in the repo: copy or symlink the sponsor's parquet file to
 ```bash
 python3 severity_model.py            # trains, evaluates, saves to severity_model/
 python3 severity_model_extended.py   # extended evaluation
+python3 rolling_evaluation.py        # month-by-month evaluation of the serious tier (a few minutes)
 python3 prefill_extra_fields.py      # HPI Designation classifier
-python3 -m pytest tests              # safety-critical checks (no dataset needed)
+python3 -m pytest                    # safety-critical checks (no dataset needed)
 ```
 
-Experiments and superseded models live in `experiments/` and import the
-pipeline modules, so run them from the repo root as modules, e.g.
-`python3 -m experiments.error_analysis`. That script lists the harmed
-patients the saved production model fails to flag, with their scores and
-narratives.
+Experiments and superseded models live in `experiments/` (see its
+[README](experiments/README.md)). They import the pipeline modules, so run
+them from the repo root as modules, e.g. `python3 -m experiments.error_analysis`,
+which lists the harmed patients the saved production model fails to flag.
 
 ### Scoring new reports
 
@@ -139,11 +143,14 @@ exact-grade accuracy 76.6%).
 in an input file don't change scores), `Event No.` split decoding, the
 grade → bucket mapping, `bucket_probs` summing to 1 (including a model
 missing a grade and shuffled class order), and a save → load → score round
-trip through `predict.py`. One extra test runs against the real
-`severity_model/` when it's been trained, and is skipped otherwise.
+trip through `predict.py`. The rolling-fold tests check that each fold
+trains only on months before its cutoff and test months, no report is tested
+twice, and the last fold is the production split. One extra test runs against
+the real `severity_model/` when it's been trained, and is skipped otherwise.
 
-Outputs in `severity_model/`: `evaluation.json`, `extended_evaluation.json`
-and `config.json` are committed; the `.joblib` model files are gitignored.
+Outputs in `severity_model/`: `evaluation.json`, `extended_evaluation.json`,
+`rolling_evaluation.json` and `config.json` are committed; the `.joblib` model
+files are gitignored.
 
 ## Results
 
@@ -174,6 +181,44 @@ kappa 0.72.
 
 Macro F1: 0.82.
 
+### Serious tier, rolling evaluation (development metric)
+
+October has only 20 G/H/I cases, so `rolling_evaluation.py` repeats the
+production split month by month: train on all earlier months, pick the cutoff
+on the next month, test on the month after. Testing March through October
+scores **303 serious cases**, each by a model that never saw its month. The
+last fold is the production split and reproduces its cutoff. Numbers are from
+`severity_model/rolling_evaluation.json`.
+
+| G/H/I cases | Flagged by triage cutoff | Labelled `serious` |
+|---|---|---|
+| All, Mar–Oct | 297 / 303 = 98.0% (95% CI 95.7–99.1%) | 157 / 303 = 51.8% (46.2–57.4%) |
+| Grade G | 68 / 69 = 98.6% | 13 / 69 = 18.8% (11.4–29.6%) |
+| Grade H | 109 / 112 = 97.3% | 76 / 112 = 67.9% (58.7–75.8%) |
+| Grade I | 120 / 122 = 98.4% | 68 / 122 = 55.7% (46.9–64.2%) |
+| Mar–Aug only (oversampled months) | 263 / 267 = 98.5% (96.2–99.4%) | 133 / 267 = 49.8% |
+| Sep–Oct only (natural harm rate) | 34 / 36 = 94.4% (81.9–98.5%) | 24 / 36 = 66.7% |
+
+How to read it:
+
+- **Use it to compare models, not as a headline.** January–August informed
+  every modelling choice, so October alone is still the final test.
+- **The triage cutoff is close to its ceiling on this tier** (6 misses in
+  303), so it can't show much improvement. The `serious` label (146 misses)
+  and the share of serious cases caught at a 5% false-alarm rate
+  (277 / 303 = 91.4%) leave more room.
+- **The `serious` label is the weak spot, grade G most of all.** About four of
+  five permanent-harm reports are flagged for review but not labelled `serious`.
+- **The `serious` label needs training data.** It labels 28% of serious cases
+  correctly in the March fold (trained on January alone) and 52–75% in the
+  last six folds, so the pooled 51.8% understates the production model.
+- **Precision and flag rate are not pooled.** January–August oversamples harm
+  (about 15% of reports versus 4–5% in September and October), which inflates
+  both; the per-fold values are in the JSON.
+- **March–August may be slightly easier than a natural month.** 98.5% versus
+  94.4% flagged, but with 36 natural-rate cases the intervals overlap and the
+  gap can't be confirmed.
+
 ### Compared with the sponsor's model
 
 The sponsor reported sensitivity (the same thing as recall) at a fixed
@@ -201,7 +246,8 @@ synthetic set.
   scores ≥0.350, while October's misses score 0.152–0.310.
 - **The serious tier is tiny.** 20 test cases (6 G, 14 H, 0 I) and 16 validation
   cases, so `serious` metrics have wide confidence intervals and grade I isn't
-  evaluated at all.
+  evaluated at all. The rolling evaluation above covers 303 cases (122 grade
+  I) as a development metric.
 - **Rare grades are weak on their own.** B1 F1 is 0.21 and G F1 is 0.55. The
   letter-grade macro F1 is 0.59, versus 0.82 once grades are grouped into
   buckets.
