@@ -367,3 +367,89 @@ sponsor's code itself isn't in the repo.
 - [ ] **Is Event Type filled in at intake?** If so, the `11-buckets` 11-way
       classifier predicts a field that already exists (see end of
       `PIPELINE.md`).
+
+## Next steps: who does what
+
+Simple next tasks for each of us, based on what each person has already
+built. Pick the first one in your list to start. Work on a branch, open a
+pull request, and tick the task here when it's merged. If a task needs
+something from someone else, it says so.
+
+### Devanshi (severity model, repo)
+
+- [ ] **Decide if DistilBERT becomes our main model.** It catches more harmed
+      patients (94.3% vs 90.3%) and raises fewer false alarms, but it's
+      slower and harder to explain. Write down the decision and why.
+- [ ] **If yes, fix its cutoff on September.** Its recall came in at 94.8%,
+      just under our 95% goal. Pick a slightly lower cutoff using September
+      only, never October.
+- [ ] **Send the sponsor the head-to-head results** and ask the open
+      questions under "Needs sponsor input" above: which cutoff they want,
+      whether the "quiet" serious cases are real, and whether Event Type is
+      filled in when a report is submitted.
+- [ ] **Keep README and PROJECT_GUIDE.md up to date** as tasks get done.
+
+### Madhura (prediction tool, tests, DistilBERT script)
+
+- [ ] **Let `predict.py` use DistilBERT as well as the current model.** Add an
+      option like `--model distilbert` so we can switch without rewriting
+      anything. This needs DistilBERT to save its trained model in a folder
+      `predict.py` can load.
+- [ ] **Add a `--seed` option to `finetune_distilbert.py`** and run it 2 more
+      times with different seeds. Every result we have is from one run, so
+      this shows how much the numbers move by chance. Each run takes about
+      40 minutes on a server GPU.
+- [ ] **Fix the test that depends on one example.**
+      `test_saved_production_model_loads_and_scores` checks that one specific
+      report gets flagged, so it can break after any retrain. Check the
+      outputs make sense (probabilities add up, the right columns exist)
+      instead of one exact answer.
+- [ ] **Add tests for DistilBERT loading and scoring**, like the ones for the
+      current model.
+
+### Alana (rolling evaluation)
+
+- [ ] **Run the rolling evaluation on the improved word-counting settings**
+      (letter chunks, C=4, from `experiments/improve_sensitivity.py`) and
+      compare it with the current model using `compare()`. This tells us if
+      the improvement holds across all months, not just October.
+- [ ] **Look into grade G (permanent harm).** About 4 out of 5 grade G reports
+      get flagged for review but aren't labelled `serious`. Make
+      `rolling_evaluation.py` also save those reports to a CSV (gitignored,
+      like `rolling_serious_misses.csv`), read some, and write down what they
+      have in common.
+- [ ] **Run the rolling evaluation for DistilBERT** if we adopt it. It
+      retrains once per month, so it needs a server GPU (several hours).
+
+### Rushil (app backend, patterns)
+
+- [ ] **Connect the event-type model.** The app shows "event type
+      unavailable" because the `11-buckets` model isn't plugged in. Work
+      with whoever owns `11-buckets` to load it the same way severity is
+      loaded.
+- [ ] **Switch the app's severity model to DistilBERT** if we adopt it, once
+      Madhura's `predict.py` option exists.
+- [ ] **Check how good the "similar reports" are.** Pick 20 reports, look at
+      the 5 similar reports the app returns for each, and mark which ones are
+      really related. That gives us a simple score (how many of the 5 were
+      right) to report to the sponsor.
+
+### Ananya (app frontend, demo)
+
+- [ ] **Load the real synthetic dataset into the app.** Right now the app
+      only has 38 made-up demo reports with placeholder grades. Write a small
+      script that imports reports from the parquet file, so the demo shows
+      real predictions.
+- [ ] **Show why a report was flagged.** On the report page, list the few
+      words that pushed the harm score up most. Rushil can help add this to
+      the backend; the current model already gives these words.
+- [ ] **Make a short demo walkthrough for the sponsor**: 5–6 screenshots of
+      the main pages with one line each on what a reviewer would do there.
+- [ ] **Have someone outside the team try the app** for 10 minutes and write
+      down where they got confused.
+
+### Everyone
+
+- Pull `main` before you start, and run `python3 -m pytest` before you push.
+- Never use the after-review fields, never tune anything on October, and
+  never commit data (see the rules in PROJECT_GUIDE.md).
