@@ -224,19 +224,48 @@ How to read it:
 
 ### Compared with the sponsor's model
 
-The sponsor reported sensitivity (the same thing as recall) at a fixed
-specificity: the share of unharmed reports correctly *not* flagged. Setting
-this model to the same 96.0% specificity:
+The sponsor reports one number for their model: **95.2% of harmed patients
+caught, while 96% of reports with no harm are correctly left alone**. To
+compare fairly, we ran the sponsor's own training code on our dataset, with
+our month-based split, and scored every model the same way on the same
+October reports (403 harmed patients). Each model was trained once.
 
-| | Sensitivity (recall) | Specificity |
+| Model | What it reads | Harmed patients caught |
 |---|---|---|
-| Sponsor's Clinical-Longformer | 95.2% | 96.0% |
-| This model | 90.3% | 96.0% |
+| Our current model (word-counting, `severity_model.py`) | Report as submitted | 90.3% (364) |
+| Our word-counting model, improved settings | Report as submitted | 91.6% (369) |
+| Sponsor's model (Clinical-Longformer) | Report as submitted | 91.6% (369) |
+| Sponsor's model, their original inputs | Report **plus** manager comments and unit actions | 93.8% (378) |
+| **Our DistilBERT model** | Report as submitted | **94.3% (380)** |
+| *Sponsor's reported number* | *Their real data, random split, plus manager comments and unit actions* | *95.2%* |
 
-This is not a like-for-like comparison. The sponsor's script feeds
-`MANAGER COMMENTS` and `UNIT_ACTIONS_TAKEN` into the model, uses a random
-rather than date-based split, and was measured on real data, not this
-synthetic set.
+What this shows, in plain terms:
+
+- **Given the same information, our DistilBERT model beats the sponsor's
+  model**: 94.3% vs 91.6%, about 11 more harmed patients caught.
+- **Even when their model also reads the manager comments and unit actions,
+  it doesn't beat ours** (93.8% vs 94.3%, a 2-patient difference, so
+  roughly a tie). Those two fields are written after the event is reviewed,
+  so they partly give away the answer, and our model doesn't use them.
+- **Those after-review fields are worth about 2 points** to the sponsor's
+  model (91.6% → 93.8%).
+- **The rest of the gap to 95.2% comes from their setup, not a better
+  model.** On our data and split, their own code scores 93.8%. Their 95.2%
+  was measured on real hospital data with a random split.
+- **DistilBERT also raises fewer false alarms.** At the cutoff picked on
+  September, it flags 10.7% of October reports and 43% of the flagged ones
+  are real harm cases. Our current model flags 16.1%, with 29% real harm
+  cases. Its recall at that cutoff came in at 94.8%, just under the 95%
+  target, so the cutoff needs a small adjustment.
+- **The sponsor's model is better at the exact letter grade** (85–86%
+  correct, vs 79% for DistilBERT and 77% for our current model). Ours is
+  better at the triage question: was the patient harmed?
+
+All of this is on synthetic data, so the numbers will shift on real reports.
+Details, including the combined event-type model, are in
+[PIPELINE.md](PIPELINE.md). The DistilBERT results are in `distilbert_results/`
+and the sponsor-model results in `experiments/sponsor_comparison/`. The
+sponsor's code itself isn't in the repo.
 
 ## Known issues and limitations
 
@@ -295,28 +324,29 @@ synthetic set.
 
 ### Experiments
 
-- [ ] **Tune DistilBERT's `MAX_LENGTH`.** 128 tokens cuts off 26.5% of
-      training reports; 256 cuts off 2.0%. The 0.79 result likely undersells
-      it. Script supports `--max-length`; not run yet (hours on a laptop GPU).
-- [ ] **Train DistilBERT on all 10 grades.** Script supports `--target grade`;
-      not run yet. It's only been run on 3 buckets.
-      Deriving bucket and triage outputs the same way as production would give a
-      like-for-like comparison. Its better `serious` precision makes this worth
-      doing.
-- [ ] **Run the sponsor's Clinical-Longformer script head-to-head.** Needs one
-      GPU/Colab session. Run it twice on the date split: once as written, and
-      once with `MANAGER COMMENTS` / `UNIT_ACTIONS_TAKEN` removed. It will
-      need updates for current `transformers`:
-      - `compute_loss` needs `num_items_in_batch=None`
-      - `evaluation_strategy` → `eval_strategy`
-      - `tokenizer=` → `processing_class=`
-
-      This measures the leakage effect on synthetic data only.
-- [ ] **Retry the combined model on a fine-tuned encoder.** Written as
-      `experiments/combined_finetune.py` (DistilBERT, event type + 10-grade
-      severity, `--no-clue` ablation) and smoke-tested; the full runs are not
-      done. Compare against `finetune_distilbert.py --target grade` at the
-      same `--max-length`.
+- [x] **Train DistilBERT on all 10 grades, reading longer reports.** Done at
+      256 tokens (cuts off 2% of reports, vs 26.5% at 128). It catches 94.3%
+      of harmed patients at 96% specificity, vs 90.3% for the current model.
+      See *Compared with the sponsor's model*.
+- [x] **Run the sponsor's Clinical-Longformer head-to-head.** Done on our data
+      and split, twice: with their original inputs (93.8%) and with only
+      the report as submitted (91.6%).
+- [x] **Retry the combined model on a fine-tuned encoder.** Done with
+      `experiments/combined_finetune.py`. Giving the severity model the
+      predicted event type made no difference to catching harm (93.8% with
+      and without it). It caught all 20 serious October cases, but so did
+      the same model without the hint, and 20 cases is too few to be sure.
+- [x] **Try cheap improvements to the word-counting model.**
+      `experiments/improve_sensitivity.py` tested 11 settings on June–September.
+      The best (letter-level features, C=4) reached 91.6% on October, vs 90.3%.
+- [ ] **Decide whether DistilBERT replaces the current model.** It beats it on
+      catching harm and raises fewer false alarms, but it needs a GPU to
+      train, is harder to explain, and its cutoff needs adjusting on
+      September (recall came in at 94.8%, just under the 95% target). If
+      adopted, `predict.py` and `analyst_app/` need to load it.
+- [ ] **Train DistilBERT more than once.** Each result above is one training
+      run; a second or third run with a different random start would show
+      how much the numbers move.
 - [ ] **Target the "quiet" serious misses.** Try features for hedged,
       potential-harm phrasing, or a second-stage check for reports that
       mention a high-risk medication or event but score low. Wait until the

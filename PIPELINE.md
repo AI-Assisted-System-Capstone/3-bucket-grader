@@ -607,6 +607,99 @@ What this does and does not show:
   direction fits October's "quiet" misses being under-represented in Jan-Aug,
   but the intervals overlap; not established.
 
+### Closing the gap with the sponsor: three experiments (2026-10-14)
+
+Our current model caught 90.3% of harmed October patients at 96% specificity
+(96% of no-harm reports left unflagged). The sponsor reports 95.2% for
+theirs. We tried three things to close that gap and to check whether the gap
+was real.
+
+All numbers below are on the same October reports (8,312 reports, 403
+harmed patients), using the same measure. Every model was trained once. The
+DistilBERT and sponsor-model runs were done on a Purdue lab GPU server
+(swan, two RTX A6000s) with the sponsor's and the lab's OK, and everything
+was deleted from the server afterwards.
+
+**1. Cheaper settings for the word-counting model**
+(`experiments/improve_sensitivity.py`). We tried 11 settings and picked the
+best one using June–September only (each month predicted by a model trained
+on earlier months), so October was not used to choose. Results on
+June–September, 3,116 harmed patients:
+
+| Setting | Harmed caught | Serious caught (of 161) |
+|---|---|---|
+| Current model | 88.7% | 145 |
+| Simpler rules (C=0.25) | 84.5% | 149 |
+| Looser rules (C=4) | 90.5% | 145 |
+| Much looser (C=16) | 89.8% | 144 |
+| No class weights | 88.9% | 125 |
+| Bigger vocabulary | 88.5% | 148 |
+| Words + letter chunks | 90.5% | 153 |
+| Separate harmed / not-harmed model | 89.2% | 137 |
+| Average of current + harmed / not-harmed | 89.6% | 143 |
+| **Words + letter chunks, C=4** | **91.3%** | **153** |
+| Words + letter chunks, C=16 | 90.6% | 151 |
+
+The winner, checked once on October: **91.6%** (369 of 403), vs 90.3% for
+the current model. Both caught 17 of the 20 serious cases. Not adopted yet.
+
+**2. DistilBERT, reading longer reports** (`experiments/finetune_distilbert.py
+--target grade --max-length 256`, and `experiments/combined_finetune.py`).
+DistilBERT is a small neural language model that reads words in context.
+At 256 tokens only 2% of reports get cut off (vs 26.5% at the old 128).
+
+| Model | Harmed caught at 96% specificity | Recall at September cutoff | Precision | Reports flagged | Serious missed (of 20) | Bucket macro F1 | Grade accuracy |
+|---|---|---|---|---|---|---|---|
+| Current word-counting model | 90.3% | 96.0% | 28.9% | 16.1% | 2 | 0.82 | 76.6% |
+| DistilBERT, 10 grades | **94.3%** | 94.8% | **43.0%** | 10.7% | 2 | 0.855 | 79.0% |
+| DistilBERT, severity + event type | 93.8% | 95.8% | 40.0% | 11.6% | 0 | 0.816 | 79.3% |
+| Same, with the event-type hint | 93.8% | 95.5% | 38.1% | 12.2% | 0 | 0.852 | 79.8% |
+
+- DistilBERT catches about 16 more harmed patients than the current model
+  at the same false-alarm rate, and when it flags a report, it's right far
+  more often (43% vs 29%).
+- Its recall at the cutoff picked on September came in at 94.8%, just
+  under the 95% target. The cutoff would need a small adjustment, made on
+  September, before adopting it.
+- **The event-type hint didn't help catch harm** (93.8% either way).
+  Event-type accuracy was about the same too (83.8% with the hint, 83.5%
+  without). Its bucket macro F1 was higher (0.852 vs 0.816), but with one
+  training run each, that gap could be chance.
+- Both combined models caught all 20 serious October cases, including the
+  two "quiet" ones every other model misses. With only 20 cases, that's
+  encouraging but not proof.
+
+**3. The sponsor's own model on our data** (`LOCAL_ONLY_sponsor_longformer_ourdata.py`,
+gitignored because it's the sponsor's code). Their Clinical-Longformer script,
+unchanged except for what's needed to run it here: our dataset and column
+names, our month-based split, current library versions, resuming after a
+disconnect, and one fix. Their class weights give a class with no examples
+a huge weight; their data has "Deleted" reports and ours doesn't, so that
+class would have taken almost all the weight. It gets weight 0 here.
+
+| Sponsor's model reading… | Harmed caught at 96% specificity | Their own cutoff method (Youden) | Grade accuracy |
+|---|---|---|---|
+| Report as submitted (same as ours) | 91.6% (369) | 89.8% at 98.2% specificity | 85.1% |
+| Their original inputs, incl. manager comments and unit actions | 93.8% (378) | 93.8% at 95.9% specificity | 85.9% |
+
+What the three experiments add up to:
+
+- **On equal inputs, our DistilBERT beats the sponsor's model**: 94.3% vs
+  91.6%, about 11 patients.
+- **With their after-review fields, their model reaches 93.8%**, still not
+  above ours (2 patients apart, effectively a tie).
+- **Those fields are worth about 2 points** to their model on this data.
+- **The rest of the gap to their 95.2% is their setup**: real data and a
+  random split. Run here, their own code scores 93.8%.
+- **Their model is better at the exact letter grade** (85–86% vs 79%), and
+  ours is better at the triage question. If the exact grade matters to the
+  sponsor, that's worth raising.
+- All of this is synthetic data and one training run per model.
+
+Results: `distilbert_results/*.json`, `experiments/sponsor_comparison/*.json`,
+`experiments/improve_sensitivity_results.json` and
+`experiments/improve_sensitivity_october.json`.
+
 ---
 
 ## Event-type pipeline (teammate's `11-buckets` repo)

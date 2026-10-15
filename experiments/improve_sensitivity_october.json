@@ -1,0 +1,18 @@
+{
+  "production": {
+    "hurt_caught": 364,
+    "hurt_n": 403,
+    "serious_caught": 17,
+    "serious_n": 20,
+    "auroc": 0.9860594786791566,
+    "sensitivity": 0.9032258064516129
+  },
+  "word + char n-grams, C=4": {
+    "hurt_caught": 369,
+    "hurt_n": 403,
+    "serious_caught": 17,
+    "serious_n": 20,
+    "auroc": 0.987825849057847,
+    "sensitivity": 0.9156327543424317
+  }
+}
