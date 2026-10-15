@@ -35,7 +35,8 @@ The sponsor-facing requirements (from the Beta Prototype Report):
 | Devanshi | Severity pipeline (`data_pipeline.py`, `severity_model.py`, `severity_model_extended.py`), repo upkeep |
 | Madhura | `predict.py`, `tests/`, `experiments/finetune_distilbert.py` |
 | Alana | `rolling_evaluation.py` and its tests |
-| Rushil | `analyst_app/` (pattern engine, backend, frontend) |
+| Rushil | `analyst_app/` backend and pattern engine |
+| Ananya | `analyst_app/` frontend and the sponsor demo |
 | Event-type teammate | Separate `11-buckets` repo (11-way event-type classifier) |
 
 ## Repo layout
@@ -129,8 +130,9 @@ Not done yet:
 - The analyst app's event-type adapter needs the `11-buckets` repo and its
   trained model, which aren't in this repo.
 
-The full task list, including questions that need the sponsor, is under
-"Open tasks" in [README.md](README.md). Keep that list as the one source of
+Each person's next tasks are under "Next steps: who does what" at the end
+of [README.md](README.md). The full task list, including questions that need
+the sponsor, is under "Open tasks" in the same file. Keep that list as the one source of
 truth: tick items there when they're done.
 
 ## Rules
