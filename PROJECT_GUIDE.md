@@ -82,6 +82,8 @@ They come from `severity_model/evaluation.json` and
 `severity_model/rolling_evaluation.json`; if you retrain, update them from
 the JSON.
 
+The current model (word-counting, `severity_model.py`):
+
 | What | Result |
 |---|---|
 | Harm flag recall (cutoff 0.2361, set on September) | 96.0% (387 of 403 harmed patients) |
@@ -89,9 +91,26 @@ the JSON.
 | Precision of the flag | 28.9% |
 | Letter-grade accuracy (A–I) | 76.6% |
 | 3-bucket macro F1 | 0.82 |
-| Sensitivity at 96% specificity | 90.3% (sponsor reports 95.2% for their model; not yet a fair comparison) |
+| Sensitivity at 96% specificity | 90.3% (sponsor reports 95.2% for their model) |
 | Serious cases flagged, rolling Mar–Oct | 297 of 303 (98.0%) |
 | Serious cases labelled `serious`, rolling Mar–Oct | 157 of 303 (51.8%); grade G only 13 of 69 |
+
+Head-to-head with the sponsor's model, same data, same split, same October
+reports. "Caught" = harmed patients caught while 96% of no-harm reports are
+left alone. Details in README ("Compared with the sponsor's model") and
+PIPELINE.md.
+
+| Model | Caught |
+|---|---|
+| Our current model | 90.3% |
+| Our word-counting model, improved settings (not adopted yet) | 91.6% |
+| Sponsor's model, report as submitted | 91.6% |
+| Sponsor's model with manager comments and unit actions | 93.8% |
+| **Our DistilBERT** (report as submitted) | **94.3%** |
+
+In short: given the same information, our DistilBERT beats the sponsor's
+model, and it ties their model even when theirs reads the after-review
+fields. Their 95.2% comes from their real data and random split.
 
 Working:
 
@@ -102,11 +121,11 @@ Working:
 
 Not done yet:
 
-- DistilBERT on all 10 grades at 256 tokens, and the combined
-  event-type + severity model (`experiments/combined_finetune.py`). Scripts
-  are ready; each run takes hours on a laptop GPU.
-- The sponsor's Clinical-Longformer model on our split. Needs a Colab GPU.
-  The sponsor's training script is not in the repo; ask Devanshi.
+- Decide whether DistilBERT replaces the current model. If yes, adjust its
+  cutoff on September and make `predict.py` and the app load it.
+- Train DistilBERT more than once, to see how much the numbers move between
+  runs. Each run takes about 40 minutes on a server GPU, about 3 hours on a
+  laptop.
 - The analyst app's event-type adapter needs the `11-buckets` repo and its
   trained model, which aren't in this repo.
 

@@ -1,0 +1,405 @@
+{
+  "config": {
+    "test_months": "2024-06..2024-09",
+    "specificity": 0.96,
+    "october_used": false
+  },
+  "candidates": {
+    "production": {
+      "pooled_sensitivity_at_96_specificity": 0.8867137355584083,
+      "pooled_counts": "2763/3116",
+      "serious_caught_at_96_specificity": "145/161",
+      "mean_auroc": 0.9772324270798503,
+      "by_month": {
+        "2024-06": {
+          "hurt_caught": 793,
+          "hurt_n": 889,
+          "serious_caught": 35,
+          "serious_n": 39,
+          "auroc": 0.9772503866992057
+        },
+        "2024-07": {
+          "hurt_caught": 789,
+          "hurt_n": 912,
+          "serious_caught": 50,
+          "serious_n": 58,
+          "auroc": 0.9756886734379808
+        },
+        "2024-08": {
+          "hurt_caught": 869,
+          "hurt_n": 960,
+          "serious_caught": 45,
+          "serious_n": 48,
+          "auroc": 0.9803116621983914
+        },
+        "2024-09": {
+          "hurt_caught": 312,
+          "hurt_n": 355,
+          "serious_caught": 15,
+          "serious_n": 16,
+          "auroc": 0.9756789859838229
+        }
+      }
+    },
+    "C=0.25": {
+      "pooled_sensitivity_at_96_specificity": 0.8446726572528883,
+      "pooled_counts": "2632/3116",
+      "serious_caught_at_96_specificity": "149/161",
+      "mean_auroc": 0.968755675696821,
+      "by_month": {
+        "2024-06": {
+          "hurt_caught": 755,
+          "hurt_n": 889,
+          "serious_caught": 36,
+          "serious_n": 39,
+          "auroc": 0.9677441271929461
+        },
+        "2024-07": {
+          "hurt_caught": 751,
+          "hurt_n": 912,
+          "serious_caught": 51,
+          "serious_n": 58,
+          "auroc": 0.9667046874151323
+        },
+        "2024-08": {
+          "hurt_caught": 823,
+          "hurt_n": 960,
+          "serious_caught": 46,
+          "serious_n": 48,
+          "auroc": 0.9730657953529938
+        },
+        "2024-09": {
+          "hurt_caught": 303,
+          "hurt_n": 355,
+          "serious_caught": 16,
+          "serious_n": 16,
+          "auroc": 0.9675080928262114
+        }
+      }
+    },
+    "C=4": {
+      "pooled_sensitivity_at_96_specificity": 0.9046854942233633,
+      "pooled_counts": "2819/3116",
+      "serious_caught_at_96_specificity": "145/161",
+      "mean_auroc": 0.9810417755275479,
+      "by_month": {
+        "2024-06": {
+          "hurt_caught": 807,
+          "hurt_n": 889,
+          "serious_caught": 35,
+          "serious_n": 39,
+          "auroc": 0.9814239282743219
+        },
+        "2024-07": {
+          "hurt_caught": 807,
+          "hurt_n": 912,
+          "serious_caught": 49,
+          "serious_n": 58,
+          "auroc": 0.9799327394854526
+        },
+        "2024-08": {
+          "hurt_caught": 888,
+          "hurt_n": 960,
+          "serious_caught": 46,
+          "serious_n": 48,
+          "auroc": 0.9833705689603813
+        },
+        "2024-09": {
+          "hurt_caught": 317,
+          "hurt_n": 355,
+          "serious_caught": 15,
+          "serious_n": 16,
+          "auroc": 0.9794398653900359
+        }
+      }
+    },
+    "no class weights": {
+      "pooled_sensitivity_at_96_specificity": 0.8889602053915276,
+      "pooled_counts": "2770/3116",
+      "serious_caught_at_96_specificity": "125/161",
+      "mean_auroc": 0.978208289902998,
+      "by_month": {
+        "2024-06": {
+          "hurt_caught": 798,
+          "hurt_n": 889,
+          "serious_caught": 30,
+          "serious_n": 39,
+          "auroc": 0.9784915552632087
+        },
+        "2024-07": {
+          "hurt_caught": 798,
+          "hurt_n": 912,
+          "serious_caught": 42,
+          "serious_n": 58,
+          "auroc": 0.976418309706154
+        },
+        "2024-08": {
+          "hurt_caught": 862,
+          "hurt_n": 960,
+          "serious_caught": 40,
+          "serious_n": 48,
+          "auroc": 0.9795278522490318
+        },
+        "2024-09": {
+          "hurt_caught": 312,
+          "hurt_n": 355,
+          "serious_caught": 13,
+          "serious_n": 16,
+          "auroc": 0.9783954423935975
+        }
+      }
+    },
+    "bigger vocab, sublinear tf": {
+      "pooled_sensitivity_at_96_specificity": 0.8851091142490373,
+      "pooled_counts": "2758/3116",
+      "serious_caught_at_96_specificity": "148/161",
+      "mean_auroc": 0.977109541553373,
+      "by_month": {
+        "2024-06": {
+          "hurt_caught": 789,
+          "hurt_n": 889,
+          "serious_caught": 35,
+          "serious_n": 39,
+          "auroc": 0.9775152491687924
+        },
+        "2024-07": {
+          "hurt_caught": 786,
+          "hurt_n": 912,
+          "serious_caught": 52,
+          "serious_n": 58,
+          "auroc": 0.975202098383213
+        },
+        "2024-08": {
+          "hurt_caught": 865,
+          "hurt_n": 960,
+          "serious_caught": 45,
+          "serious_n": 48,
+          "auroc": 0.9796103291629431
+        },
+        "2024-09": {
+          "hurt_caught": 318,
+          "hurt_n": 355,
+          "serious_caught": 16,
+          "serious_n": 16,
+          "auroc": 0.9761104894985436
+        }
+      }
+    },
+    "word + char n-grams": {
+      "pooled_sensitivity_at_96_specificity": 0.9050064184852374,
+      "pooled_counts": "2820/3116",
+      "serious_caught_at_96_specificity": "153/161",
+      "mean_auroc": 0.9809324043422751,
+      "by_month": {
+        "2024-06": {
+          "hurt_caught": 804,
+          "hurt_n": 889,
+          "serious_caught": 36,
+          "serious_n": 39,
+          "auroc": 0.9804045532391987
+        },
+        "2024-07": {
+          "hurt_caught": 816,
+          "hurt_n": 912,
+          "serious_caught": 54,
+          "serious_n": 58,
+          "auroc": 0.9791840928430469
+        },
+        "2024-08": {
+          "hurt_caught": 878,
+          "hurt_n": 960,
+          "serious_caught": 48,
+          "serious_n": 48,
+          "auroc": 0.9840290810247245
+        },
+        "2024-09": {
+          "hurt_caught": 322,
+          "hurt_n": 355,
+          "serious_caught": 15,
+          "serious_n": 16,
+          "auroc": 0.9801118902621306
+        }
+      }
+    },
+    "binary hurt model": {
+      "pooled_sensitivity_at_96_specificity": 0.8918485237483954,
+      "pooled_counts": "2779/3116",
+      "serious_caught_at_96_specificity": "137/161",
+      "mean_auroc": 0.9774306214041439,
+      "by_month": {
+        "2024-06": {
+          "hurt_caught": 791,
+          "hurt_n": 889,
+          "serious_caught": 32,
+          "serious_n": 39,
+          "auroc": 0.9774613554141114
+        },
+        "2024-07": {
+          "hurt_caught": 803,
+          "hurt_n": 912,
+          "serious_caught": 46,
+          "serious_n": 58,
+          "auroc": 0.9758292144189161
+        },
+        "2024-08": {
+          "hurt_caught": 866,
+          "hurt_n": 960,
+          "serious_caught": 44,
+          "serious_n": 48,
+          "auroc": 0.9804963509085491
+        },
+        "2024-09": {
+          "hurt_caught": 319,
+          "hurt_n": 355,
+          "serious_caught": 15,
+          "serious_n": 16,
+          "auroc": 0.9759355648749989
+        }
+      }
+    },
+    "blend: production + binary hurt": {
+      "pooled_sensitivity_at_96_specificity": 0.8956996148908858,
+      "pooled_counts": "2791/3116",
+      "serious_caught_at_96_specificity": "143/161",
+      "mean_auroc": 0.9787172633360324,
+      "by_month": {
+        "2024-06": {
+          "hurt_caught": 805,
+          "hurt_n": 889,
+          "serious_caught": 35,
+          "serious_n": 39,
+          "auroc": 0.978797183521593
+        },
+        "2024-07": {
+          "hurt_caught": 795,
+          "hurt_n": 912,
+          "serious_caught": 46,
+          "serious_n": 58,
+          "auroc": 0.9772856580305253
+        },
+        "2024-08": {
+          "hurt_caught": 875,
+          "hurt_n": 960,
+          "serious_caught": 46,
+          "serious_n": 48,
+          "auroc": 0.981657264670837
+        },
+        "2024-09": {
+          "hurt_caught": 316,
+          "hurt_n": 355,
+          "serious_caught": 16,
+          "serious_n": 16,
+          "auroc": 0.9771289471211746
+        }
+      }
+    },
+    "C=16": {
+      "pooled_sensitivity_at_96_specificity": 0.8982670089858793,
+      "pooled_counts": "2799/3116",
+      "serious_caught_at_96_specificity": "144/161",
+      "mean_auroc": 0.9810167151589749,
+      "by_month": {
+        "2024-06": {
+          "hurt_caught": 802,
+          "hurt_n": 889,
+          "serious_caught": 35,
+          "serious_n": 39,
+          "auroc": 0.9820483127569741
+        },
+        "2024-07": {
+          "hurt_caught": 809,
+          "hurt_n": 912,
+          "serious_caught": 48,
+          "serious_n": 58,
+          "auroc": 0.979752140930241
+        },
+        "2024-08": {
+          "hurt_caught": 872,
+          "hurt_n": 960,
+          "serious_caught": 45,
+          "serious_n": 48,
+          "auroc": 0.9827766607089663
+        },
+        "2024-09": {
+          "hurt_caught": 316,
+          "hurt_n": 355,
+          "serious_caught": 16,
+          "serious_n": 16,
+          "auroc": 0.9794897462397185
+        }
+      }
+    },
+    "word + char n-grams, C=4": {
+      "pooled_sensitivity_at_96_specificity": 0.9133504492939666,
+      "pooled_counts": "2846/3116",
+      "serious_caught_at_96_specificity": "153/161",
+      "mean_auroc": 0.9833866490510518,
+      "by_month": {
+        "2024-06": {
+          "hurt_caught": 812,
+          "hurt_n": 889,
+          "serious_caught": 36,
+          "serious_n": 39,
+          "auroc": 0.9833166585135088
+        },
+        "2024-07": {
+          "hurt_caught": 819,
+          "hurt_n": 912,
+          "serious_caught": 54,
+          "serious_n": 58,
+          "auroc": 0.9821623848061848
+        },
+        "2024-08": {
+          "hurt_caught": 888,
+          "hurt_n": 960,
+          "serious_caught": 48,
+          "serious_n": 48,
+          "auroc": 0.9858644250819184
+        },
+        "2024-09": {
+          "hurt_caught": 327,
+          "hurt_n": 355,
+          "serious_caught": 15,
+          "serious_n": 16,
+          "auroc": 0.9822031278025948
+        }
+      }
+    },
+    "word + char n-grams, C=16": {
+      "pooled_sensitivity_at_96_specificity": 0.9056482670089859,
+      "pooled_counts": "2822/3116",
+      "serious_caught_at_96_specificity": "151/161",
+      "mean_auroc": 0.9829981733025911,
+      "by_month": {
+        "2024-06": {
+          "hurt_caught": 805,
+          "hurt_n": 889,
+          "serious_caught": 36,
+          "serious_n": 39,
+          "auroc": 0.983542828031017
+        },
+        "2024-07": {
+          "hurt_caught": 814,
+          "hurt_n": 912,
+          "serious_caught": 53,
+          "serious_n": 58,
+          "auroc": 0.9818045824054461
+        },
+        "2024-08": {
+          "hurt_caught": 880,
+          "hurt_n": 960,
+          "serious_caught": 47,
+          "serious_n": 48,
+          "auroc": 0.985025692582663
+        },
+        "2024-09": {
+          "hurt_caught": 323,
+          "hurt_n": 355,
+          "serious_caught": 15,
+          "serious_n": 16,
+          "auroc": 0.9816195901912383
+        }
+      }
+    }
+  }
+}

@@ -12,11 +12,13 @@ repo root). Results and conclusions are written up in
 | `ordinal_vs_coarse.py` | 10-grade model vs. a model trained only on hurt / not hurt | 10-grade model kept; became `severity_model.py` |
 | `augment_rare_grades.py` | Hand-written extra training reports for grades G/H/I | Rejected, no measurable effect |
 | `combined_mtl.py` | Feeding a predicted event type into severity (frozen MiniLM) | Rejected: encoder too weak to answer the question |
-| `combined_finetune.py` | The same idea on fine-tuned DistilBERT (`--no-clue` = ablation) | Written and smoke-tested; full runs not done yet |
-| `finetune_distilbert.py` | DistilBERT, `--target bucket` or `--target grade`, `--max-length N` | 3-bucket at 128 tokens: macro F1 0.79 vs. production's 0.82. 10-grade at 256 not run yet |
+| `combined_finetune.py` | The same idea on fine-tuned DistilBERT (`--no-clue` = ablation) | Done: 93.8% caught with or without the event-type hint, so the hint didn't help |
+| `finetune_distilbert.py` | DistilBERT, `--target bucket` or `--target grade`, `--max-length N` | 10 grades at 256 tokens: 94.3% caught at 96% specificity vs 90.3% for production. Candidate to replace it |
 | `error_analysis.py` | Lists the harmed October reports the production model doesn't flag | Current (uses the saved production model) |
 | `leakage_inflation_check.py` | Effect of adding the post-review fields back into the input | Little effect on this synthetic data |
-| `longformer_colab.ipynb` | Clinical-Longformer on the 3 buckets, for a Colab GPU | Uses the leakage-safe date split; not run yet |
+| `longformer_colab.ipynb` | Clinical-Longformer on the 3 buckets, for a Colab GPU | Superseded by the head-to-head run of the sponsor's own script (results in `sponsor_comparison/`) |
+| `improve_sensitivity.py` | 11 settings of the word-counting model, chosen on June–September | Best (letter chunks, C=4): 91.6% on October vs 90.3% |
+| `sponsor_comparison/` | Results of the sponsor's Clinical-Longformer on our data and split | 91.6% on the report as submitted, 93.8% with manager comments and unit actions |
 
 Run them as modules from the repo root, so they can import `data_pipeline`
 and their relative output paths resolve there:
