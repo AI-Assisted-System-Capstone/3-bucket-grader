@@ -13,7 +13,7 @@ repo root). Results and conclusions are written up in
 | `augment_rare_grades.py` | Hand-written extra training reports for grades G/H/I | Rejected, no measurable effect |
 | `combined_mtl.py` | Feeding a predicted event type into severity (frozen MiniLM) | Rejected: encoder too weak to answer the question |
 | `combined_finetune.py` | The same idea on fine-tuned DistilBERT (`--no-clue` = ablation) | Done: 93.8% caught with or without the event-type hint, so the hint didn't help |
-| `finetune_distilbert.py` | DistilBERT, `--target bucket` or `--target grade`, `--max-length N` | 10 grades at 256 tokens: 94.3% caught at 96% specificity vs 90.3% for production. Candidate to replace it |
+| `finetune_distilbert.py` | DistilBERT, `--target bucket` or `--target grade`, `--max-length N`, `--seed N` (default 42); `--target grade` also saves a model `predict.py --model distilbert` loads | 10 grades at 256 tokens: 94.3% caught at 96% specificity vs 90.3% for production. Candidate to replace it |
 | `error_analysis.py` | Lists the harmed October reports the production model doesn't flag | Current (uses the saved production model) |
 | `leakage_inflation_check.py` | Effect of adding the post-review fields back into the input | Little effect on this synthetic data |
 | `longformer_colab.ipynb` | Clinical-Longformer on the 3 buckets, for a Colab GPU | Superseded by the head-to-head run of the sponsor's own script (results in `sponsor_comparison/`) |

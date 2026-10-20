@@ -21,6 +21,13 @@ Platt calibration fit on September, everything reported on October, plus the
 sponsor's 96%-specificity comparison from severity_model_extended.py. A
 summary is written to distilbert_results/<target>_len<N>.json (committed);
 checkpoints go to distilbert_output/ (gitignored).
+
+--seed sets the random start (classifier head, data order, dropout). The
+default, 42, is the seed every committed result used and keeps its file name;
+any other seed writes distilbert_results/<target>_len<N>_seed<S>.json, so
+repeat runs sit beside the original. With --target grade the trained model is
+also saved to distilbert_output/<run>/final/ for `predict.py --model distilbert`
+(see distilbert_model.py).
 """
 
 import argparse
@@ -53,6 +60,7 @@ from transformers import (
 )
 
 from data_pipeline import BUCKET_MAP, FULL_LABELS, LABEL2ID, LABELS, train_val_test
+from distilbert_model import save_distilbert
 from severity_model import TARGET_RECALL, bucket_probs, pick_cutoff_for_recall, triage_score
 from severity_model_extended import SPONSOR_SPECIFICITY, cutoff_for_specificity
 
@@ -61,6 +69,7 @@ RESULTS_DIR = "./distilbert_results"
 
 MODEL_NAME = "distilbert-base-uncased"
 MAX_LENGTH = 128  # the original guess; pass --max-length to change it
+DEFAULT_SEED = 42  # the Trainer's default, used by every committed result
 
 TARGETS = {
     # target: (label column, class names)
@@ -85,6 +94,16 @@ def to_triage(proba, target):
     return triage_score(proba, np.arange(len(FULL_LABELS)))
 
 
+def fit_cutoff_and_calibrator(target, proba_val, val_df):
+    """Cutoff and Platt scaling, both fit on September only."""
+    y_hurt_val = val_df["hurt_label"].to_numpy()
+    triage_val = to_triage(proba_val, target)
+    cutoff = pick_cutoff_for_recall(y_hurt_val, triage_val, TARGET_RECALL)
+    calibrator = LogisticRegression()
+    calibrator.fit(triage_val.reshape(-1, 1), y_hurt_val)
+    return cutoff, calibrator
+
+
 def evaluate(target, proba_val, proba_test, val_df, test_df):
     """Same derived outputs and metrics as severity_model.py's evaluation.json."""
     y_hurt_val = val_df["hurt_label"].to_numpy()
@@ -95,11 +114,8 @@ def evaluate(target, proba_val, proba_test, val_df, test_df):
     triage_val = to_triage(proba_val, target)
     triage_test = to_triage(proba_test, target)
 
-    cutoff = pick_cutoff_for_recall(y_hurt_val, triage_val, TARGET_RECALL)
+    cutoff, calibrator = fit_cutoff_and_calibrator(target, proba_val, val_df)
     flagged_test = (triage_test >= cutoff).astype(int)
-
-    calibrator = LogisticRegression()
-    calibrator.fit(triage_val.reshape(-1, 1), y_hurt_val)
     calibrated_test = calibrator.predict_proba(triage_test.reshape(-1, 1))[:, 1]
 
     spec_cutoff = cutoff_for_specificity(y_hurt_test, triage_test, SPONSOR_SPECIFICITY)
@@ -171,9 +187,13 @@ def main(argv=None):
     parser.add_argument("--target", choices=sorted(TARGETS), default="bucket")
     parser.add_argument("--max-length", type=int, default=MAX_LENGTH)
     parser.add_argument("--epochs", type=float, default=3)
+    parser.add_argument("--seed", type=int, default=DEFAULT_SEED,
+                        help=f"random seed (default {DEFAULT_SEED}, the one the committed results used)")
     args = parser.parse_args(argv)
 
     run_name = f"{args.target}_len{args.max_length}"
+    if args.seed != DEFAULT_SEED:
+        run_name += f"_seed{args.seed}"
     out_dir = os.path.join(OUT_DIR, run_name)
     label_col, class_names = TARGETS[args.target]
     n_classes = len(class_names)
@@ -259,6 +279,7 @@ def main(argv=None):
         greater_is_better=True,
         save_total_limit=1,
         use_mps_device=(device == "mps"),
+        seed=args.seed,
         report_to=[],
     )
 
@@ -281,9 +302,14 @@ def main(argv=None):
     np.save(os.path.join(out_dir, "proba_test.npy"), proba_test)
 
     results = evaluate(args.target, proba_val, proba_test, val_df, test_df)
+    if args.target == "grade":
+        cutoff, calibrator = fit_cutoff_and_calibrator(args.target, proba_val, val_df)
+        final_dir = os.path.join(out_dir, "final")
+        save_distilbert(final_dir, trainer, tokenizer, calibrator, cutoff, args.max_length, TARGET_RECALL)
+        print("Saved model for predict.py to", final_dir)
     results["config"] = {
         "model": MODEL_NAME, "target": args.target, "max_length": args.max_length,
-        "epochs": args.epochs, "train_truncated_share": float(truncated),
+        "epochs": args.epochs, "seed": args.seed, "train_truncated_share": float(truncated),
         "best_checkpoint": trainer.state.best_model_checkpoint,
         "epoch_log": [h for h in trainer.state.log_history if "eval_serious_recall" in h],
     }
