@@ -1,6 +1,8 @@
 import threading
+from collections import Counter
 from typing import Protocol
 
+from .batches import review_order, review_tier
 from .contracts import AIResult, EventInput, now
 from .inference import (
     EventTypeService,
@@ -52,6 +54,9 @@ class Services:
     def __init__(self, settings, db, encoder=None):
         self.settings, self.db = settings, db
         self.lock = threading.RLock()
+        self.batch_lock = threading.Lock()
+        self.active_batches = set()
+        self.db.recover_batches()
         self.queue = BackgroundQueue()
         self.startup_errors = {}
         if settings.fixture_mode:
@@ -91,12 +96,12 @@ class Services:
         ).model_dump(mode="json")
         self.db.put("ai_results", key, result)
 
-    def analyze(self, key):
+    def analyze(self, key, refresh_summaries=True):
         with self.lock:
             record = self.db.get("events", key)
             if not record:
                 return
-            event = EventInput(**{k: record[k] for k in EventInput.model_fields})
+            event = EventInput(**{k: record[k] for k in EventInput.model_fields if k in record})
             result = AIResult(event_id=key)
             for name in ("severity", "event_type"):
                 model = getattr(self, name)
@@ -115,13 +120,71 @@ class Services:
                 if not result.errors
                 else ("failed" if len(result.errors) == 3 else "partial")
             )
-            self.db.put("ai_results", key, result.model_dump(mode="json"))
-            self.refresh_summaries()
+            payload = result.model_dump(mode="json")
+            self.db.put("ai_results", key, payload)
+            if refresh_summaries:
+                self.refresh_summaries()
             self.db.audit("ai." + result.status, key)
+            return payload
+
+    def queue_batch(self, tasks, key):
+        with self.batch_lock:
+            batch = self.db.get("import_batches", key)
+            if key in self.active_batches or batch["status"] == "complete":
+                return False
+            if batch["status"] != "pending":
+                self.db.put("import_batches", key, dict(batch, status="pending"))
+            self.active_batches.add(key)
+            tasks.add_task(self.analyze_batch, key)
+        return True
+
+    def batch_summary(self, batch):
+        return dict(batch, status="processing" if batch["status"] == "pending" else batch["status"])
+
+    def analyze_batch(self, key):
+        try:
+            batch = self.db.get("import_batches", key)
+            results = {}
+            events = [self.db.get("events", event_id) for event_id in batch["event_ids"]]
+            for event in sorted(events, key=lambda record: record["event_date"]):
+                result = self.analyze(event["id"], refresh_summaries=False)
+                results[event["id"]] = {
+                    field: result[field]
+                    for field in (
+                        "event_id",
+                        "severity",
+                        "event_type",
+                        "status",
+                        "model_versions",
+                        "errors",
+                        "created_at",
+                    )
+                }
+                results[event["id"]]["batch_tier"] = review_tier(result)
+            with self.lock:
+                self.refresh_summaries()
+            batch.update(
+                status="complete",
+                results=results,
+                fixture_mode=self.settings.fixture_mode,
+                event_ids=sorted(
+                    batch["event_ids"], key=lambda key: review_order({"ai": results[key]})
+                ),
+                counts=dict(Counter(result["batch_tier"] for result in results.values())),
+            )
+            self.db.put("import_batches", key, batch)
+        except Exception:
+            batch = self.db.get("import_batches", key)
+            if batch:
+                self.db.put(
+                    "import_batches", key, dict(batch, status="failed", results={}, counts={})
+                )
+        finally:
+            with self.batch_lock:
+                self.active_batches.discard(key)
 
     def refresh_summaries(self):
         """Incremental membership changes update counts without reclustering."""
-        from collections import Counter
         from datetime import date
 
         events = {r["id"]: r for r in self.db.all("events")}

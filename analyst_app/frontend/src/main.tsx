@@ -26,9 +26,10 @@ import {
   Search,
   ShieldCheck,
   LoaderCircle,
+  Upload,
   X,
 } from "lucide-react";
-import type { AI, Event, Health, Match, Pattern, Trend } from "./types";
+import type { AI, Batch, Event, Health, Match, Pattern, Trend } from "./types";
 import { Dashboard } from "./Dashboard";
 import "./styles.css";
 
@@ -226,14 +227,23 @@ function PatternCard({ pattern }: { pattern: Pattern }) {
     </Link>
   );
 }
+const batchTiers = {
+  immediate: "Immediate",
+  secondary: "Secondary",
+  unscored: "Unscored",
+  routine: "Routine",
+} as const;
+
 function EventTable({
   events,
   loading = false,
   error = "",
+  batchId = "",
 }: {
   events: Event[];
   loading?: boolean;
   error?: string;
+  batchId?: string;
 }) {
   if (loading) return <Loading text="Loading reports…" />;
   if (error) return null;
@@ -255,7 +265,7 @@ function EventTable({
             <th>Date / location</th>
             <th>AI event type</th>
             <th>AI severity</th>
-            <th>AI review signal</th>
+            <th>{batchId ? "Batch review tier" : "AI review signal"}</th>
             <th>Analyst review</th>
           </tr>
         </thead>
@@ -266,7 +276,14 @@ function EventTable({
               className={e.ai?.severity?.priority_flag ? "priority-row" : ""}
             >
               <td>
-                <Link className="event-link" to={"/events/" + e.id}>
+                <Link
+                  className="event-link"
+                  to={
+                    "/events/" +
+                    e.id +
+                    (batchId ? `?batch=${encodeURIComponent(batchId)}` : "")
+                  }
+                >
                   {e.event_id}
                   <ChevronRight size={14} />
                 </Link>
@@ -289,7 +306,14 @@ function EventTable({
                 )}
               </td>
               <td>
-                {e.ai?.severity?.priority_flag ? (
+                {batchId ? (
+                  <Tag
+                    kind={e.batch_tier === "immediate" ? "watch" : undefined}
+                  >
+                    {e.batch_tier ? batchTiers[e.batch_tier] : "Pending"}
+                    {e.ai?.severity?.fixture ? " · Fixture" : ""}
+                  </Tag>
+                ) : e.ai?.severity?.priority_flag ? (
                   <Tag kind="watch">
                     <AlertTriangle size={13} />
                     {e.ai.severity.fixture
@@ -329,6 +353,7 @@ function EventTable({
 function Worklist() {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
+  const batchId = params.get("batch") || "";
   const filters: Record<string, string> = {
     all: "All reports",
     unreviewed: "Awaiting review",
@@ -344,16 +369,92 @@ function Worklist() {
   );
   const offset = (Math.floor(page) - 1) * 50;
   function paginate(next: number) {
-    setParams({ filter, page: String(next) });
+    setParams(
+      batchId
+        ? { batch: batchId, page: String(next) }
+        : { filter, page: String(next) },
+    );
   }
   const [tick, setTick] = useState(0),
     [show, setShow] = useState(params.get("new") === "1"),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
-  const events = useLoad<{ items: Event[]; total: number }>(
-    `/events?offset=${offset}&limit=50&filter=${filter}`,
+  const [showUpload, setShowUpload] = useState(false),
+    [uploading, setUploading] = useState(false),
+    [retrying, setRetrying] = useState(false);
+  const history = useLoad<Batch[]>("/batches", tick);
+  const events = useLoad<{ items: Event[]; total: number; batch?: Batch }>(
+    batchId
+      ? `/batches/${encodeURIComponent(batchId)}?offset=${offset}&limit=50`
+      : `/events?offset=${offset}&limit=50&filter=${filter}`,
     tick,
   );
+  const batch = events.data?.batch;
+  useEffect(() => {
+    if (batch?.status !== "processing") return;
+    const timer = window.setTimeout(() => setTick((value) => value + 1), 1600);
+    return () => window.clearTimeout(timer);
+  }, [batch]);
+
+  async function upload(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (uploading) return;
+    const input = e.currentTarget.elements.namedItem("workbook");
+    const file =
+      input instanceof HTMLInputElement ? input.files?.[0] : undefined;
+    setError("");
+    if (
+      !(file instanceof File) ||
+      !/\.xlsx$/i.test(file.name) ||
+      !file.size ||
+      file.size > 8 * 1024 * 1024
+    ) {
+      setError("Choose a non-empty Excel .xlsx export no larger than 8 MB.");
+      return;
+    }
+    setUploading(true);
+    try {
+      const response = await fetch("/api/batches", {
+        method: "POST",
+        headers: {
+          "Content-Type":
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        },
+        body: file,
+      });
+      if (!response.ok) {
+        const body = [409, 413, 415, 422].includes(response.status)
+          ? await response.json()
+          : {};
+        throw new Error(
+          typeof body.detail === "string"
+            ? body.detail
+            : "Upload failed. Check the local app and try again.",
+        );
+      }
+      const saved: Batch = await response.json();
+      setShowUpload(false);
+      setParams({ batch: saved.id });
+      setTick((value) => value + 1);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function retryBatch() {
+    setRetrying(true);
+    setError("");
+    try {
+      await api(`/batches/${encodeURIComponent(batchId)}/retry`, {});
+      setTick((value) => value + 1);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setRetrying(false);
+    }
+  }
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (busy) return;
@@ -376,40 +477,163 @@ function Worklist() {
         title="Safety event worklist"
         description="Review the report, consider the suggestions, record your decision."
         action={
-          <button
-            className={show ? "secondary" : ""}
-            disabled={busy}
-            aria-expanded={show}
-            aria-controls="new-report"
-            onClick={() => {
-              setShow(!show);
-              setError("");
-            }}
-          >
-            {show ? <X size={16} /> : <Plus size={16} />}
-            {show ? "Cancel new report" : "New report"}
-          </button>
+          <div className="row">
+            <button
+              disabled={uploading || busy}
+              aria-expanded={showUpload}
+              aria-controls="upload-export"
+              onClick={() => {
+                setShowUpload(!showUpload);
+                setShow(false);
+                setError("");
+              }}
+            >
+              <Upload size={16} />
+              {showUpload ? "Cancel upload" : "Upload MIDAS export"}
+            </button>
+            <button
+              className="secondary"
+              disabled={busy || uploading}
+              aria-expanded={show}
+              aria-controls="new-report"
+              onClick={() => {
+                setShow(!show);
+                setShowUpload(false);
+                setError("");
+              }}
+            >
+              {show ? <X size={16} /> : <Plus size={16} />}
+              {show ? "Cancel new report" : "New report"}
+            </button>
+          </div>
         }
       />
       <ErrorNote text={error || events.error} />
+      {showUpload && (
+        <form
+          id="upload-export"
+          className="panel form report-form"
+          onSubmit={upload}
+          aria-busy={uploading}
+        >
+          <h2>Upload a MIDAS export</h2>
+          <p className="muted">
+            Choose an .xlsx workbook with up to 500 reports on the first sheet.
+            The local app analyzes the reports and saves a timestamped batch.
+          </p>
+          <label>
+            Excel export
+            <input
+              name="workbook"
+              type="file"
+              accept=".xlsx"
+              required
+              disabled={uploading}
+            />
+          </label>
+          <div className="form-actions">
+            <button disabled={uploading}>
+              {uploading ? "Uploading…" : "Upload and analyze"}
+            </button>
+          </div>
+        </form>
+      )}
       <div className="worklist-toolbar">
         <label className="inline">
-          Show reports
+          Upload batch
           <select
-            value={filter}
-            onChange={(e) => setParams({ filter: e.target.value })}
+            value={batchId}
+            onChange={(e) => {
+              setError("");
+              setParams(e.target.value ? { batch: e.target.value } : {});
+            }}
           >
-            {Object.entries(filters).map(([value, label]) => (
-              <option key={value} value={value}>
-                {label}
+            <option value="">Entire worklist</option>
+            {batchId && !history.data?.some((item) => item.id === batchId) && (
+              <option value={batchId}>Selected batch</option>
+            )}
+            {history.data?.map((item) => (
+              <option value={item.id} key={item.id}>
+                {new Date(item.uploaded_at).toLocaleString()} ·{" "}
+                {item.report_count} reports
               </option>
             ))}
           </select>
         </label>
-        <span className="muted">
-          Filters apply to the entire workspace, not just this page.
-        </span>
+        {!batchId && (
+          <>
+            <label className="inline">
+              Show reports
+              <select
+                value={filter}
+                onChange={(e) => setParams({ filter: e.target.value })}
+              >
+                {Object.entries(filters).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <span className="muted">
+              Filters apply to the entire workspace, not just this page.
+            </span>
+          </>
+        )}
       </div>
+      {history.error && (
+        <ErrorNote text="Upload history could not load. Refresh the worklist to retry." />
+      )}
+      {batch && (
+        <section className="panel report-form" aria-label="Batch summary">
+          <h2>Batch uploaded {new Date(batch.uploaded_at).toLocaleString()}</h2>
+          <p>
+            {batch.report_count} reports · {batch.new_count} added to the
+            worklist
+          </p>
+          {batch.fixture_mode && (
+            <Tag kind="watch">Synthetic classifier fixtures</Tag>
+          )}
+          {batch.status === "processing" && (
+            <Loading text="Analyzing this batch…" />
+          )}
+          {batch.status === "complete" && (
+            <>
+              <div className="row" aria-label="Review tier counts">
+                {Object.entries(batchTiers).map(([tier, label]) => (
+                  <Tag
+                    key={tier}
+                    kind={tier === "immediate" ? "watch" : undefined}
+                  >
+                    {label} {batch.counts[tier as keyof typeof batchTiers] ?? 0}
+                  </Tag>
+                ))}
+              </div>
+              <p className="muted">
+                Immediate follows the model’s priority flag. Unflagged grade D
+                or higher is secondary. Lower grades are routine. Unscored
+                reports need manual review.
+              </p>
+            </>
+          )}
+          {(batch.status === "failed" || batch.status === "interrupted") && (
+            <>
+              <p role="status">
+                Batch analysis{" "}
+                {batch.status === "failed" ? "failed" : "was interrupted"}. The
+                imported reports are saved.
+              </p>
+              <button
+                className="secondary"
+                disabled={retrying}
+                onClick={retryBatch}
+              >
+                Retry batch analysis
+              </button>
+            </>
+          )}
+        </section>
+      )}
       {show && (
         <form
           id="new-report"
@@ -480,6 +704,7 @@ function Worklist() {
           events={events.data?.items || []}
           loading={events.loading}
           error={events.error}
+          batchId={batchId}
         />
       )}
       <div className="pagination">
@@ -549,6 +774,8 @@ const grades = ["A", "B1", "B2", "C", "D", "E", "F", "G", "H", "I"],
   codes = ["ADR", "C", "E", "EQ", "FALL", "I", "ME", "O", "SH", "SI", "T"];
 function EventDetail() {
   const { id } = useParams();
+  const [params] = useSearchParams();
+  const batchId = params.get("batch");
   const [tick, setTick] = useState(0),
     [n, setN] = useState(5),
     [requestedN, setRequestedN] = useState("5"),
@@ -598,8 +825,15 @@ function EventDetail() {
   }
   return (
     <>
-      <Link className="back" to="/worklist">
-        ← Back to worklist
+      <Link
+        className="back"
+        to={
+          batchId
+            ? `/worklist?batch=${encodeURIComponent(batchId)}`
+            : "/worklist"
+        }
+      >
+        {batchId ? "← Back to batch" : "← Back to worklist"}
       </Link>
       <Heading
         eyebrow="EVENT REVIEW"
@@ -645,7 +879,10 @@ function EventDetail() {
               <div className="metadata">
                 {[
                   ["Event date", r.event_date],
+                  ["Event time", r.event_time],
+                  ["Date received", r.date_received],
                   ["Location", r.location_name],
+                  ["Location code", r.location_code],
                   ["Service", r.encounter_service],
                   ["Facility", r.facility],
                   ["Age at encounter", r.age_at_encounter?.toString() || ""],

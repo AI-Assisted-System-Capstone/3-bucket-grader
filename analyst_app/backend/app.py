@@ -10,10 +10,14 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.concurrency import run_in_threadpool
 
+from .batches import ImportErrorDetail, MAX_UPLOAD_BYTES, read_workbook, review_order
 from .config import Settings
 from .contracts import (
     AIResult,
+    BatchSummary,
+    BatchWorklist,
     DashboardResult,
     AnalyzeRequest,
     EventInput,
@@ -26,7 +30,7 @@ from .contracts import (
     TrendResult,
 )
 from .services import Services
-from .storage import Database
+from .storage import Database, ImportConflict
 from .dashboard import event_rows, matches_filter, overview
 
 
@@ -99,6 +103,12 @@ def create_app(settings=None, encoder=None):
             raise HTTPException(404, "Pattern not found")
         return {k: v for k, v in value.items() if k != "centroid"}
 
+    def batch(key):
+        value = app.state.db.get("import_batches", key)
+        if value is None:
+            raise HTTPException(404, "Upload batch not found")
+        return value
+
     @app.get("/api/health")
     def health():
         s = app.state.services
@@ -133,10 +143,65 @@ def create_app(settings=None, encoder=None):
             for r in event_rows(app.state.db.snapshot("events", "ai_results", "analyst_feedback"))
             if matches_filter(r, filter)
         ]
+        records.sort(key=review_order)
         return dict(
             total=len(records),
             items=records[offset : offset + limit],
         )
+
+    @app.post("/api/batches", status_code=202, response_model=BatchSummary)
+    async def upload_batch(request: Request, background: BackgroundTasks):
+        if (
+            request.headers.get("content-type")
+            != "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ):
+            raise HTTPException(415, "Choose a MIDAS Excel .xlsx export.")
+        content = bytearray()
+        async for chunk in request.stream():
+            if len(content) + len(chunk) > MAX_UPLOAD_BYTES:
+                raise HTTPException(413, "Choose an Excel workbook no larger than 8 MB.")
+            content.extend(chunk)
+        try:
+            reports = await run_in_threadpool(read_workbook, content)
+            saved = await run_in_threadpool(
+                app.state.db.create_batch, reports, settings.fixture_mode
+            )
+        except ImportErrorDetail as error:
+            raise HTTPException(422, str(error)) from None
+        except ImportConflict as error:
+            raise HTTPException(409, str(error)) from None
+        app.state.services.queue_batch(background, saved["id"])
+        return app.state.services.batch_summary(saved)
+
+    @app.get("/api/batches", response_model=List[BatchSummary])
+    def batches():
+        return [app.state.services.batch_summary(item) for item in app.state.db.batch_history()]
+
+    @app.get("/api/batches/{key}", response_model=BatchWorklist)
+    def batch_worklist(
+        key: str, offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=500)
+    ):
+        saved = batch(key)
+        snapshot = app.state.db.snapshot("events", "analyst_feedback")
+        members = set(saved["event_ids"])
+        snapshot["events"] = [record for record in snapshot["events"] if record["id"] in members]
+        snapshot["ai_results"] = list(saved["results"].values())
+        rows = {record["id"]: record for record in event_rows(snapshot)}
+        records = [rows[event_id] for event_id in saved["event_ids"]]
+        for record in records:
+            record["batch_tier"] = (record["ai"] or {}).get("batch_tier")
+        return dict(
+            batch=app.state.services.batch_summary(saved),
+            total=len(records),
+            items=records[offset : offset + limit],
+        )
+
+    @app.post("/api/batches/{key}/retry", status_code=202, response_model=BatchSummary)
+    def retry_batch(key: str, background: BackgroundTasks):
+        batch(key)
+        if not app.state.services.queue_batch(background, key):
+            raise HTTPException(409, "This batch is already running or complete.")
+        return app.state.services.batch_summary(batch(key))
 
     @app.get("/api/events/{key}", response_model=EventRecord)
     def get_event(key: str):

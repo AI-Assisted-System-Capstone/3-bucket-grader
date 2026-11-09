@@ -61,11 +61,15 @@ export type Decision = {
   created_at: string;
 };
 export type Event = {
+  batch_tier?: BatchTier | null;
   review_status?: "reviewed" | "unreviewed";
   id: string;
   event_id: string;
   event_comments: string;
   event_date: string;
+  event_time?: string | null;
+  date_received?: string | null;
+  location_code?: string;
   location_name: string;
   encounter_service: string;
   facility: string;
@@ -78,6 +82,16 @@ export type Event = {
   suspect_dose: string;
   ai?: AI;
   analyst_decisions?: Decision[];
+};
+export type BatchTier = "immediate" | "secondary" | "routine" | "unscored";
+export type Batch = {
+  id: string;
+  uploaded_at: string;
+  status: "processing" | "complete" | "failed" | "interrupted";
+  report_count: number;
+  new_count: number;
+  counts: Partial<Record<BatchTier, number>>;
+  fixture_mode: boolean;
 };
 export type Pattern = {
   trend_stale?: boolean;

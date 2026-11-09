@@ -8,6 +8,7 @@ from typing import Protocol
 from uuid import uuid4
 
 from .contracts import now
+from .contracts import EventInput
 
 TABLES = (
     "events",
@@ -19,7 +20,12 @@ TABLES = (
     "trend_results",
     "analyst_feedback",
     "audit_log",
+    "import_batches",
 )
+
+
+class ImportConflict(ValueError):
+    pass
 
 
 class AuditSink(Protocol):
@@ -52,6 +58,8 @@ class Database:
                 CREATE TABLE IF NOT EXISTS analyst_feedback (
                     id TEXT PRIMARY KEY, event_id TEXT REFERENCES events(id), payload TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS audit_log (id TEXT PRIMARY KEY, payload TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS import_batches (
+                    id TEXT PRIMARY KEY, payload TEXT NOT NULL);
             """)
         Path(path).chmod(0o600)
 
@@ -103,16 +111,71 @@ class Database:
                 (key, json.dumps(payload, allow_nan=False)),
             )
 
-    def create_event(self, event):
+    def _insert_event(self, db, event):
         key = str(uuid4())
         record = dict(id=key, **event.model_dump(mode="json"), created_at=now())
+        db.execute(
+            "INSERT INTO events VALUES(?,?,?)",
+            (key, event.event_id, json.dumps(record, allow_nan=False)),
+        )
+        self._audit(db, "event.created", key)
+        return record
+
+    def create_event(self, event):
+        with self.connect() as db:
+            return self._insert_event(db, event)
+
+    def create_batch(self, reports, fixture_mode):
+        batch = dict(
+            id=str(uuid4()),
+            uploaded_at=now(),
+            status="pending",
+            fixture_mode=fixture_mode,
+            report_count=len(reports),
+            new_count=0,
+            event_ids=[],
+            counts={},
+            results={},
+        )
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            for number, event in reports:
+                existing = db.execute(
+                    "SELECT payload FROM events WHERE source_id=?", (event.event_id,)
+                ).fetchone()
+                if existing:
+                    record = json.loads(existing[0])
+                    if any(
+                        record.get(key, EventInput.model_fields[key].default) != value
+                        for key, value in event.model_dump(mode="json").items()
+                    ):
+                        raise ImportConflict(
+                            f"Row {number}: this event ID already has different report fields."
+                        )
+                else:
+                    record = self._insert_event(db, event)
+                    batch["new_count"] += 1
+                batch["event_ids"].append(record["id"])
+            db.execute("INSERT INTO import_batches VALUES(?,?)", (batch["id"], json.dumps(batch)))
+            self._audit(db, "batch.uploaded", batch["id"])
+        return batch
+
+    def batch_history(self):
+        with self.connect() as db:
+            return [
+                json.loads(payload)
+                for (payload,) in db.execute(
+                    "SELECT json_remove(payload, '$.event_ids', '$.results') "
+                    "FROM import_batches ORDER BY rowid DESC"
+                )
+            ]
+
+    def recover_batches(self):
         with self.connect() as db:
             db.execute(
-                "INSERT INTO events VALUES(?,?,?)",
-                (key, event.event_id, json.dumps(record, allow_nan=False)),
+                "UPDATE import_batches SET payload=json_set(payload, '$.status', 'interrupted') "
+                "WHERE json_extract(payload, '$.status')='pending'"
             )
-            self._audit(db, "event.created", key)
-        return record
 
     def feedback(self, event_id, data):
         record = dict(

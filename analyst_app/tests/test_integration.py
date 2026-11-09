@@ -2,12 +2,14 @@ import json
 import os
 import tempfile
 import unittest
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
 from fastapi.testclient import TestClient
+from openpyxl import Workbook
 from pydantic import ValidationError
 
 from backend.app import create_app
@@ -260,6 +262,106 @@ class APITests(unittest.TestCase):
         response = self.client.post("/api/events", json=event(identifier).model_dump(mode="json"))
         self.assertEqual(response.status_code, 201)
         return response.json()["id"]
+
+    def upload_workbook(self, identifiers):
+        workbook = Workbook()
+        workbook.active.append(
+            [
+                "Event No.",
+                "Event Date",
+                "Event Time",
+                "Date Received",
+                "Location Name",
+                "Location... Code",
+                "Encounter Service",
+                "Age at Encounter",
+                "ME - Prescribed - Name *... Name",
+                "event_comments",
+                "Significance (PSRS Harm score)",
+                "manager_comments",
+            ]
+        )
+        for index, identifier in enumerate(identifiers, start=1):
+            workbook.active.append(
+                [
+                    identifier,
+                    datetime(2026, 9, index) if index % 2 else f"9/{index}/2026",
+                    "8:05",
+                    "9/12/2026",
+                    "Synthetic unit",
+                    "DEMO",
+                    "Medicine",
+                    58,
+                    "Synthetic drug",
+                    f"Synthetic narrative for the {identifier} scenario.",
+                    "EXCLUDED GRADE",
+                    "EXCLUDED REVIEW",
+                ]
+            )
+        buffer = BytesIO()
+        workbook.save(buffer)
+        return self.client.post(
+            "/api/batches",
+            content=buffer.getvalue(),
+            headers={
+                "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            },
+        )
+
+    def test_excel_batch_ranking_and_history(self):
+        severity = self.app.state.services.severity
+        predict = severity.predict_event
+
+        def score(report):
+            if report.event_id == "UNSCORED":
+                raise RuntimeError("Synthetic model failure")
+            grade = {"ROUTINE": "A", "SECONDARY": "D", "IMMEDIATE": "E"}[report.event_id]
+            return predict(report).model_copy(
+                update={"grade": grade, "priority_flag": grade == "E"}
+            )
+
+        ids = ["IMMEDIATE", "UNSCORED", "SECONDARY", "ROUTINE"]
+        with patch.object(severity, "predict_event", side_effect=score):
+            response = self.upload_workbook(ids)
+        self.assertEqual(response.status_code, 202, response.text)
+        first_id = response.json()["id"]
+        first = self.client.get(f"/api/batches/{first_id}").json()
+        self.assertEqual(
+            first["batch"]["counts"],
+            {tier: 1 for tier in ("immediate", "secondary", "unscored", "routine")},
+        )
+        self.assertEqual(
+            [row["event_id"] for row in first["items"]],
+            ["IMMEDIATE", "SECONDARY", "UNSCORED", "ROUTINE"],
+        )
+        self.assertEqual(first["items"][0]["event_time"], "08:05:00")
+        self.assertEqual(first["items"][0]["date_received"], "2026-09-12")
+        self.assertEqual(first["items"][0]["location_code"], "DEMO")
+        self.assertNotIn("EXCLUDED", json.dumps(first))
+        self.assertEqual(
+            self.client.get("/api/events?limit=1").json()["items"][0]["event_id"], "IMMEDIATE"
+        )
+
+        repeat = self.upload_workbook(ids)
+        self.assertEqual(repeat.status_code, 202, repeat.text)
+        self.assertEqual(repeat.json()["new_count"], 0)
+        self.assertEqual(self.client.get("/api/events").json()["total"], 4)
+        self.assertEqual(self.client.get(f"/api/batches/{first_id}").json(), first)
+        with TestClient(create_app(self.settings)) as restarted:
+            history = restarted.get("/api/batches").json()
+            self.assertEqual([item["id"] for item in history], [repeat.json()["id"], first_id])
+            self.assertEqual(restarted.get(f"/api/batches/{first_id}").json(), first)
+
+    def test_invalid_excel_batch_is_atomic(self):
+        self.assertEqual(self.upload_workbook(["SAME", "SAME"]).status_code, 422)
+        self.assertEqual(self.client.get("/api/batches").json(), [])
+        self.assertEqual(self.client.get("/api/events").json()["total"], 0)
+        self.post("EXISTING")
+        response = self.upload_workbook(["NEW", "EXISTING"])
+        self.assertEqual(response.status_code, 409)
+        self.assertNotIn("EXISTING", response.text)
+        self.assertEqual(self.client.get("/api/events").json()["total"], 1)
+        self.assertEqual(self.client.get("/api/batches").json(), [])
 
     def test_all_required_routes_and_contract(self):
         key = self.post()

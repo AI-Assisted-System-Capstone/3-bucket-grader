@@ -1,4 +1,4 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timezone
 from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -44,6 +44,9 @@ class EventInput(BaseModel):
     suspect_medication: str = Field(default="", max_length=200)
     suspect_dose: str = Field(default="", max_length=100)
     event_date: date
+    event_time: Optional[time] = None
+    date_received: Optional[date] = None
+    location_code: str = Field(default="", max_length=100)
     facility: str = Field(default="", max_length=200)
 
 
@@ -104,11 +107,26 @@ class EventRecord(EventInput):
     ai: Optional[AIResult] = None
     analyst_decisions: List[dict] = Field(default_factory=list)
     analysis_status: Optional[str] = None
+    batch_tier: Optional[Literal["immediate", "secondary", "routine", "unscored"]] = None
 
 
 class EventList(BaseModel):
     total: int
     items: List[EventRecord]
+
+
+class BatchSummary(BaseModel):
+    id: str
+    uploaded_at: str
+    status: Literal["processing", "complete", "failed", "interrupted"]
+    report_count: int
+    new_count: int
+    counts: Dict[str, int]
+    fixture_mode: bool
+
+
+class BatchWorklist(EventList):
+    batch: BatchSummary
 
 
 class SimilarResult(BaseModel):

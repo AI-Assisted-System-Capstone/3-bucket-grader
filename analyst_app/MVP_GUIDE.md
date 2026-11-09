@@ -43,6 +43,20 @@ through `./run_local.sh --force-tfidf`; it was not replaced.
 For frontend development run the API and `cd frontend && npm run dev`; Vite proxies
 API requests locally. Build before serving the same-origin version above.
 
+## Import a MIDAS export
+
+In **Event worklist**, choose **Upload MIDAS export** and select an `.xlsx` file
+with its headers in the first row of the first sheet. The app accepts up to 500
+reports and 8 MB per upload. `Event No.`, `Event Date`, and `event_comments` are
+required. The importer reads supported intake fields and excludes existing grades,
+event-type labels, and analyst review fields. Choose an earlier upload from the
+**Upload batch** list to see its saved ranking and upload timestamp.
+
+Immediate follows the severity model’s priority flag. Unflagged suggested grades
+D and higher are secondary. Lower grades are routine. Reports without a severity
+result appear as unscored. Repeated identical reports share one worklist record,
+and conflicting records with the same source ID are reported by spreadsheet row.
+
 ## Architecture
 
 ```mermaid

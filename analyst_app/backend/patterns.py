@@ -189,7 +189,7 @@ class PatternService:
         old = self.db.get("event_embeddings", record["id"])
         if old and old["model_version"] == self.version:
             return np.asarray(old["vector"], dtype=np.float32)
-        event = EventInput(**{key: record[key] for key in EventInput.model_fields})
+        event = EventInput(**{key: record[key] for key in EventInput.model_fields if key in record})
         vector = self.encoder.encode([normalized_text(event)])[0]
         self.db.put(
             "event_embeddings",
