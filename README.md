@@ -357,19 +357,28 @@ sponsor's code itself isn't in the repo.
 - [ ] **Cluster drug names.** Medication fields are in the input, but semantic
       grouping of drug names hasn't been built.
 
-### Needs sponsor input
+### Sponsor and team answers
 
-- [ ] **Triage cutoff policy:** 0.236 (misses 2–3 serious cases) or about 0.152
-      (catches all, with about 25 more false alarms per day). This is a
-      staffing and risk decision.
+- [x] **Letter grade or harmed / not harmed?** Both. The app shows the A–I
+      grade and the harm probability side by side ("Grade E · 95.5% harm"),
+      plus the priority flag.
+- [x] **Triage cutoff policy:** reviewers can handle extra reports, so aim to
+      catch every serious case. Choose the cutoff on September or the rolling
+      folds (March–September), never on October.
+- [x] **Is Event Type filled in at intake?** No, a reviewer fills it in
+      later. So it is never a model input, and the `11-buckets` event-type
+      model is useful in the app.
+- [x] **Narrative/label mismatch** (reports that say "no harm noted" but carry
+      a harm grade): the sponsor can't say how common this is in the real
+      data. In the synthetic data it's 529 of 8,326 harmed reports (6.4%).
+      This stays a stated limitation.
+- [x] **Archetype IDs:** not available. We can't check whether the same
+      report templates appear in both training and test months, so test
+      results may be somewhat optimistic. This stays a stated limitation.
+- [ ] **Where to host the test version:** the sponsor doesn't know yet. We
+      propose a host (see the deployment write-up).
 - [ ] **Are the missed serious cases real or label noise?** Raise this at the
       Safety Officer shadowing session.
-- [ ] **Narrative/label mismatch:** the same question at larger scale, for reports
-      that say "no harm noted" but carry a harm grade.
-- [ ] **Archetype IDs**, needed to check template overlap between train and test.
-- [ ] **Is Event Type filled in at intake?** If so, the `11-buckets` 11-way
-      classifier predicts a field that already exists (see end of
-      `PIPELINE.md`).
 
 ## Next steps: who does what
 
@@ -386,10 +395,9 @@ something from someone else, it says so.
 - [ ] **If yes, fix its cutoff on September.** Its recall came in at 94.8%,
       just under our 95% goal. Pick a slightly lower cutoff using September
       only, never October.
-- [ ] **Send the sponsor the head-to-head results** and ask the open
-      questions under "Needs sponsor input" above: which cutoff they want,
-      whether the "quiet" serious cases are real, and whether Event Type is
-      filled in when a report is submitted.
+- [x] **Ask the sponsor the open questions.** Answers are under "Sponsor
+      and team answers" above.
+- [ ] **Send the sponsor the head-to-head results.**
 - [ ] **Keep README and PROJECT_GUIDE.md up to date** as tasks get done.
 
 ### Madhura (prediction tool, tests, DistilBERT script)
