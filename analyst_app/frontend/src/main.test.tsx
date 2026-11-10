@@ -502,6 +502,25 @@ describe("analyst UX regression checks", () => {
     expect(screen.getByText(/closest similarity 0\.61, below 0\.75/)).toBeTruthy();
   });
 
+  it("lists the words that raised and lowered the harm score", async () => {
+    const explained = {
+      ...ai,
+      severity: {
+        ...ai.severity,
+        harm_words: [{ term: "laceration", effect: 0.0157 }],
+        safe_words: [{ term: "bathroom", effect: -0.0022 }],
+      },
+    };
+    fetchMock.mockImplementation(async (path: string, init?: RequestInit) =>
+      response(path.endsWith("/ai") ? explained : resolve(path, init)),
+    );
+    open("/events/test-event");
+    await screen.findByText("Why this score");
+    expect(screen.getByText("laceration")).toBeTruthy();
+    expect(screen.getByText("+1.6 pts")).toBeTruthy();
+    expect(screen.getByText("−0.2 pts")).toBeTruthy();
+  });
+
   it("applies similar-report count deliberately instead of on every keystroke", async () => {
     open("/events/test-event");
     await screen.findByLabelText("Number of similar reports");

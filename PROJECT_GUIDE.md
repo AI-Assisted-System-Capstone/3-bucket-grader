@@ -133,7 +133,6 @@ Not done yet:
   laptop.
 - The analyst app's event-type model lives in the `11-buckets` repo, so it
   has to be trained there once (`src/prepare_data.py`, `src/baseline.py`).
-- The app doesn't yet show *why* a report was flagged (Ananya's task).
 
 Each person's next tasks are under "Next steps: who does what" at the end
 of [README.md](README.md). The full task list, including questions that need

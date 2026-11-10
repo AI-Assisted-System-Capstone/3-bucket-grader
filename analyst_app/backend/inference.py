@@ -99,6 +99,8 @@ class SeverityService:
         self.model = joblib.load(folder / names[1])
         self.calibrator = joblib.load(folder / names[2])
         self.cutoff = float(json.loads((folder / names[3]).read_text())["cutoff_raw_triage"])
+        feature_names = getattr(self.vectorizer, "get_feature_names_out", None)
+        self.terms = np.asarray(feature_names()) if feature_names else None  # None: no words
         if not 0 <= self.cutoff <= 1 or set(self.model.classes_) - set(range(10)):
             raise ValueError("Invalid severity artifact contract")
         self.version = "severity-" + fingerprint(
@@ -111,16 +113,18 @@ class SeverityService:
         if not events:
             return []
         text = self.builder(model_frame(events))
-        p = probabilities(
-            self.model.predict_proba(self.vectorizer.transform(text)),
-            len(self.model.classes_),
-        )
+        features = self.vectorizer.transform(text)
+        p = probabilities(self.model.predict_proba(features), len(self.model.classes_))
         buckets = probabilities(self.upstream.bucket_probs(p, self.model.classes_), 3)
         raw = self.upstream.triage_score(p, self.model.classes_)
         calibrated = probabilities(self.calibrator.predict_proba(raw.reshape(-1, 1)), 2)
         positive = list(self.calibrator.classes_).index(1)
+        explainable = getattr(self, "terms", None) is not None and hasattr(self.model, "coef_")
         results = []
         for i in range(len(events)):
+            harm_words, safe_words = (
+                self.explain(features[i], p[i], raw[i]) if explainable else ([], [])
+            )
             grades = dict.fromkeys(GRADES, 0.0)
             grades.update(
                 {GRADES[int(c)]: float(value) for c, value in zip(self.model.classes_, p[i])}
@@ -136,9 +140,33 @@ class SeverityService:
                     harm_probability_calibrated=float(calibrated[i, positive]),
                     priority_flag=bool(raw[i] >= self.cutoff),
                     model_version=self.version,
+                    harm_words=harm_words,
+                    safe_words=safe_words,
                 )
             )
         return results
+
+    def explain(self, row, p, triage, top=5):
+        """Which words in this report moved its harm score, and by how much.
+
+        The harm score is the summed probability of grades E-I. For a softmax
+        model its slope along word j is sum_k p_k (harm_k - score) w_kj, so a
+        word's effect is its TF-IDF value times that slope. Exact for this
+        model's linear layer; an estimate of the effect on the probability.
+        """
+        harm = np.isin(self.model.classes_, [GRADES.index(g) for g in "EFGHI"]).astype(float)
+        slope = (p * (harm - triage)) @ self.model.coef_
+        row = row.tocsr()
+        effect = row.data * slope[row.indices]
+        order = np.argsort(effect)
+        def words(indices):
+            return [
+                dict(term=str(self.terms[row.indices[j]]), effect=round(float(effect[j]), 4))
+                for j in indices
+            ]
+        up = [j for j in order[::-1][:top] if effect[j] > 0]
+        down = [j for j in order[:top] if effect[j] < 0]
+        return words(up), words(down)
 
     def predict_event(self, event):
         return self.predict_batch([event])[0]

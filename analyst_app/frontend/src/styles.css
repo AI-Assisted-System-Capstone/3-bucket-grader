@@ -1527,3 +1527,32 @@ details small {
 td .tag + .tag {
   margin-top: 6px;
 }
+
+/* "Why this score" word list on the report page. */
+.why-flagged {
+  margin: 4px 0 14px;
+}
+.why-flagged h3 {
+  margin: 0 0 4px;
+  font-size: 14px;
+}
+.word-list {
+  list-style: none;
+  margin: 6px 0 10px;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.word-list li {
+  display: inline-flex;
+  gap: 6px;
+  align-items: baseline;
+  padding: 4px 8px;
+  border-radius: 5px;
+  background: #eef2f5;
+  font-size: 12px;
+}
+.word-list small {
+  color: #506074;
+}

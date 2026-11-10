@@ -445,9 +445,9 @@ something from someone else, it says so.
 - [x] **Load the real synthetic dataset into the app.** Rushil's
       **Upload MIDAS export** button takes an `.xlsx` export (up to 500
       reports per file), scores every report and ranks them for review.
-- [ ] **Show why a report was flagged.** On the report page, list the few
-      words that pushed the harm score up most. Rushil can help add this to
-      the backend; the current model already gives these words.
+- [x] **Show why a report was flagged.** The report page has a "Why this
+      score" box: the words in that report that raised (and lowered) its harm
+      score most, with how many points each moved it.
 - [ ] **Make a short demo walkthrough for the sponsor**: 5–6 screenshots of
       the main pages with one line each on what a reviewer would do there.
 - [ ] **Have someone outside the team try the app** for 10 minutes and write

@@ -29,7 +29,16 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import type { AI, Batch, Event, Health, Match, Pattern, Trend } from "./types";
+import type {
+  AI,
+  Batch,
+  Event,
+  Health,
+  Match,
+  Pattern,
+  Trend,
+  WordEffect,
+} from "./types";
 import { Dashboard } from "./Dashboard";
 import "./styles.css";
 
@@ -208,6 +217,23 @@ function harmShare(grades: Record<string, number> = {}) {
     .filter(([g]) => ["E", "F", "G", "H", "I"].includes(g))
     .reduce((sum, [, n]) => sum + n, 0);
   return `${Math.round((harmed / total) * 100)}% suggested harm (E–I) · ${total} scored`;
+}
+
+// Each word with how many percentage points it moved the harm score.
+function WordList({ words, sign }: { words: WordEffect[]; sign: string }) {
+  return (
+    <ul className="word-list">
+      {words.map((w) => (
+        <li key={w.term}>
+          <span>{w.term}</span>
+          <small>
+            {sign}
+            {Math.abs(w.effect * 100).toFixed(1)} pts
+          </small>
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 function PatternCard({ pattern }: { pattern: Pattern }) {
@@ -1055,6 +1081,23 @@ function EventDetail() {
                       {a.severity.priority_flag ? "Suggested" : "Not flagged"}
                     </dd>
                   </dl>
+                  {!!a.severity.harm_words?.length && (
+                    <div className="why-flagged">
+                      <h3>Why this score</h3>
+                      <p className="muted">
+                        Words in this report that raised the harm score most.
+                        They show what the model weighed, not the cause of
+                        the event.
+                      </p>
+                      <WordList words={a.severity.harm_words} sign="+" />
+                      {!!a.severity.safe_words?.length && (
+                        <>
+                          <p className="muted">Words that lowered it:</p>
+                          <WordList words={a.severity.safe_words} sign="−" />
+                        </>
+                      )}
+                    </div>
+                  )}
                   <details>
                     <summary>Inspect grade probabilities</summary>
                     <Distribution

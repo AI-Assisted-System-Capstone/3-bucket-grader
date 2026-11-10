@@ -8,7 +8,11 @@ export type Severity = {
   priority_flag: boolean;
   model_version: string;
   fixture: boolean;
+  // Words that moved this report's harm score up / down most.
+  harm_words?: WordEffect[];
+  safe_words?: WordEffect[];
 };
+export type WordEffect = { term: string; effect: number };
 export type EventType = {
   event_type_code: string;
   event_type_label: string;

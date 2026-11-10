@@ -60,6 +60,11 @@ class SeverityResult(BaseModel):
     priority_flag: bool
     model_version: str
     fixture: bool = False
+    # Words in this report that pushed the harm score up / down most:
+    # [{"term": "hemolyzed", "effect": 0.031}, ...]. Effect is the word's share
+    # of the summed E-I probability (local linear estimate), not a cause.
+    harm_words: List[dict] = Field(default_factory=list)
+    safe_words: List[dict] = Field(default_factory=list)
 
 
 class EventTypeResult(BaseModel):

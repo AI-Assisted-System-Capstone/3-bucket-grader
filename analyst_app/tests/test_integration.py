@@ -163,6 +163,32 @@ class ContractTests(unittest.TestCase):
         service.cutoff = 0.40001
         self.assertFalse(service.predict_event(event()).priority_flag)
 
+    def test_severity_explanation_matches_the_model(self):
+        from scipy.sparse import csr_matrix
+        from sklearn.feature_extraction.text import TfidfVectorizer
+        from sklearn.linear_model import LogisticRegression
+
+        texts = [f"grade{g} word{g} shared" for g in range(10) for _ in range(3)]
+        labels = [g for g in range(10) for _ in range(3)]
+        vectorizer = TfidfVectorizer().fit(texts)
+        model = LogisticRegression(max_iter=2000).fit(vectorizer.transform(texts), labels)
+        service = SeverityService()
+        service.model, service.terms = model, vectorizer.get_feature_names_out()
+
+        def harm_score(x):
+            return model.predict_proba(x)[0][5:].sum()
+
+        row = vectorizer.transform(["word8 shared word1"])
+        up, down = service.explain(row, model.predict_proba(row)[0], harm_score(row))
+        self.assertEqual(up[0]["term"], "word8")  # grade H word raises harm
+        self.assertIn("word1", [w["term"] for w in down])  # grade B1 word lowers it
+        # Effect = value x slope; check the slope against a small nudge.
+        j = list(service.terms).index("word8")
+        nudged = row.toarray()
+        nudged[0, j] += 1e-5
+        slope = (harm_score(csr_matrix(nudged)) - harm_score(row)) / 1e-5
+        self.assertAlmostEqual(up[0]["effect"], row[0, j] * slope, places=3)
+
 
 class PatternTests(unittest.TestCase):
     def test_similarity_sorted_self_and_future_excluded(self):
