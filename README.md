@@ -429,10 +429,10 @@ something from someone else, it says so.
 
 ### Rushil (app backend, patterns)
 
-- [ ] **Connect the event-type model.** The app shows "event type
-      unavailable" because the `11-buckets` model isn't plugged in. Work
-      with whoever owns `11-buckets` to load it the same way severity is
-      loaded.
+- [x] **Connect the event-type model.** The app now loads it from
+      `../11-buckets` when that repo is checked out next to this one and its
+      `outputs/baseline/model_seed0.pt` exists (train it with
+      `src/prepare_data.py` then `src/baseline.py` in `11-buckets`).
 - [ ] **Switch the app's severity model to DistilBERT** if we adopt it, once
       Madhura's `predict.py` option exists.
 - [ ] **Check how good the "similar reports" are.** Pick 20 reports, look at
@@ -442,10 +442,9 @@ something from someone else, it says so.
 
 ### Ananya (app frontend, demo)
 
-- [ ] **Load the real synthetic dataset into the app.** Right now the app
-      only has 38 made-up demo reports with placeholder grades. Write a small
-      script that imports reports from the parquet file, so the demo shows
-      real predictions.
+- [x] **Load the real synthetic dataset into the app.** Rushil's
+      **Upload MIDAS export** button takes an `.xlsx` export (up to 500
+      reports per file), scores every report and ranks them for review.
 - [ ] **Show why a report was flagged.** On the report page, list the few
       words that pushed the harm score up most. Rushil can help add this to
       the backend; the current model already gives these words.

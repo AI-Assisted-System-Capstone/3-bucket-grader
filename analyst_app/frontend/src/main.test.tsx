@@ -483,6 +483,25 @@ describe("analyst UX regression checks", () => {
     ).toBe(false);
   });
 
+  it("flags a novel event in the worklist and explains it on the report", async () => {
+    const novelAI = {
+      ...ai,
+      novelty: { novel: true, nearest_similarity: 0.61, threshold: 0.75 },
+    };
+    fetchMock.mockImplementation(async (path: string, init?: RequestInit) => {
+      if (path.startsWith("/api/events?"))
+        return response({ total: 1, items: [{ ...record, ai: novelAI }] });
+      if (path.endsWith("/ai")) return response(novelAI);
+      return response(resolve(path, init));
+    });
+    open("/worklist");
+    await screen.findByText("Novel event");
+    cleanup();
+    open("/events/test-event");
+    await screen.findByText(/Nothing in the past year/);
+    expect(screen.getByText(/closest similarity 0\.61, below 0\.75/)).toBeTruthy();
+  });
+
   it("applies similar-report count deliberately instead of on every keystroke", async () => {
     open("/events/test-event");
     await screen.findByLabelText("Number of similar reports");

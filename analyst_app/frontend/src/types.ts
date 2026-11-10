@@ -47,6 +47,12 @@ export type AI = {
   event_type: EventType | null;
   themes: Membership[];
   similar_events: Match[];
+  // null until there are enough earlier reports to judge.
+  novelty?: {
+    novel: boolean;
+    nearest_similarity: number;
+    threshold: number;
+  } | null;
   trend_context: Trend[];
   errors: Record<string, string>;
   status: string;

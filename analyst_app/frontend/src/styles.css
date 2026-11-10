@@ -1515,3 +1515,15 @@ details small {
     top: calc(100% + 26px);
   }
 }
+
+/* Novel-event note on the event page, and spacing when two tags share a cell. */
+.callout {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--amber-bg);
+  line-height: 1.5;
+}
+td .tag + .tag {
+  margin-top: 6px;
+}

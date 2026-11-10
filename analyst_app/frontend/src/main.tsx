@@ -66,6 +66,13 @@ async function api<T>(path: string, body?: unknown): Promise<T> {
   }
   return response.json() as Promise<T>;
 }
+// The three harm groups, in words a reviewer can read at a glance.
+const BUCKET_NAMES: Record<string, string> = {
+  none: "no harm (A–D)",
+  some: "temporary harm (E–F)",
+  serious: "serious harm (G–I)",
+};
+
 function useLoad<T>(path: string, tick = 0) {
   const [data, setData] = useState<T | null>(null),
     [error, setError] = useState("");
@@ -183,6 +190,26 @@ function Spark({ trend, large = false }: { trend: Trend; large?: boolean }) {
     </div>
   );
 }
+// Top three locations with counts, then how many others.
+function topLocations(counts: Record<string, number> = {}) {
+  const sorted = Object.entries(counts).sort((x, y) => y[1] - x[1]);
+  if (!sorted.length) return "No assigned locations";
+  const shown = sorted.slice(0, 3).map(([name, n]) => `${name} (${n})`);
+  const more = sorted.length - 3;
+  return shown.join(" · ") + (more > 0 ? ` · +${more} more` : "");
+}
+
+// Share of the theme's reports whose suggested grade is E–I (harm).
+function harmShare(grades: Record<string, number> = {}) {
+  const scored = Object.entries(grades).filter(([g]) => g !== "unavailable");
+  const total = scored.reduce((sum, [, n]) => sum + n, 0);
+  if (!total) return "";
+  const harmed = scored
+    .filter(([g]) => ["E", "F", "G", "H", "I"].includes(g))
+    .reduce((sum, [, n]) => sum + n, 0);
+  return `${Math.round((harmed / total) * 100)}% suggested harm (E–I) · ${total} scored`;
+}
+
 function PatternCard({ pattern }: { pattern: Pattern }) {
   const t = pattern.trend;
   return (
@@ -201,10 +228,10 @@ function PatternCard({ pattern }: { pattern: Pattern }) {
         </Tag>
       </div>
       <h3>{pattern.name}</h3>
-      <p>
-        {Object.keys(pattern.location_distribution).join(" · ") ||
-          "No assigned locations"}
-      </p>
+      <p>{topLocations(pattern.location_distribution)}</p>
+      {harmShare(pattern.severity_distribution) && (
+        <p className="muted">{harmShare(pattern.severity_distribution)}</p>
+      )}
       {t && (
         <>
           <Spark trend={t} />
@@ -299,7 +326,8 @@ function EventTable({
               <td>
                 {e.ai?.severity ? (
                   <Tag>
-                    Grade {e.ai.severity.grade} · {e.ai.severity.bucket}
+                    Grade {e.ai.severity.grade} ·{" "}
+                    {pct(e.ai.severity.harm_probability_calibrated)} harm
                   </Tag>
                 ) : (
                   "—"
@@ -327,6 +355,7 @@ function EventTable({
                       : e.ai?.status || "Unanalyzed"}
                   </Tag>
                 )}
+                {e.ai?.novelty?.novel && <Tag kind="watch">Novel event</Tag>}
               </td>
               <td>
                 <span className="review-label">
@@ -938,9 +967,18 @@ function EventDetail() {
                 </form>
               </div>
               <p className="muted">
-                Cosine similarity describes text resemblance, not a shared
-                cause.
+                Reports from the year before this one. Cosine similarity
+                describes text resemblance, not a shared cause.
               </p>
+              {a?.novelty?.novel && (
+                <p className="callout">
+                  <Tag kind="watch">Novel event</Tag> Nothing in the past year
+                  closely matches this report (closest similarity{" "}
+                  {a.novelty.nearest_similarity.toFixed(2)}, below{" "}
+                  {a.novelty.threshold.toFixed(2)}). It may be a new kind of
+                  event.
+                </p>
+              )}
               <ErrorNote text={matches.error} />
               {matches.loading && (
                 <Loading text="Finding historical matches…" />
@@ -994,7 +1032,10 @@ function EventDetail() {
                     <strong>{a.severity.grade}</strong>
                     <div>
                       Suggested PSRS grade
-                      <small>{a.severity.bucket} harm bucket</small>
+                      <small>
+                        Most likely group:{" "}
+                        {BUCKET_NAMES[a.severity.bucket] || a.severity.bucket}
+                      </small>
                     </div>
                   </div>
                   {a.severity.fixture && (
