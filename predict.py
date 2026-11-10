@@ -7,6 +7,11 @@ row of a CSV or parquet file:
 
     python3 predict.py reports.parquet -o scored.csv
     python3 predict.py reports.csv -o scored.parquet --model-dir ./severity_model
+    python3 predict.py reports.parquet -o scored.csv --model distilbert
+
+`--model distilbert` loads a fine-tuned 10-grade DistilBERT from
+distilbert_output/grade_len256/final (override with --model-dir); see
+distilbert_model.py. The output columns are the same for both models.
 
 Output, one row per input row, in input order:
     event_no            passed through from `Event No.` if the input has it
@@ -45,6 +50,17 @@ class SeverityModel:
     calibrator: object
     cutoff: float
 
+    @property
+    def classes_(self):
+        return self.clf.classes_
+
+    def predict_proba(self, texts):
+        return self.clf.predict_proba(self.vectorizer.transform(texts))
+
+
+MODELS = ("tfidf", "distilbert")
+DEFAULT_DISTILBERT_DIR = "./distilbert_output/grade_len256/final"
+
 
 def load_model(model_dir=OUT_DIR):
     paths = {name: os.path.join(model_dir, f"{name}.joblib") for name in ("vectorizer", "model", "calibrator")}
@@ -62,6 +78,15 @@ def load_model(model_dir=OUT_DIR):
         calibrator=joblib.load(paths["calibrator"]),
         cutoff=float(cfg["cutoff_raw_triage"]),
     )
+
+
+def load_any_model(kind="tfidf", model_dir=None):
+    if kind == "tfidf":
+        return load_model(model_dir or OUT_DIR)
+    if kind == "distilbert":
+        from distilbert_model import load_distilbert
+        return load_distilbert(model_dir or DEFAULT_DISTILBERT_DIR)
+    raise ValueError(f"Unknown model {kind!r}; expected one of {MODELS}")
 
 
 def read_reports(path):
@@ -84,7 +109,7 @@ def write_scores(scores, path):
 
 
 def score_reports(reports, model):
-    """Score a DataFrame of raw reports. Returns one output row per input row."""
+    """Score a DataFrame of raw reports with either model. Returns one output row per input row."""
     if TEXT_COL not in reports.columns:
         raise ValueError(f"Input has no {TEXT_COL!r} column -- nothing to score")
     # Optional intake fields that are absent are treated as blank, the same as
@@ -94,9 +119,8 @@ def score_reports(reports, model):
         print(f"[predict] Input lacks intake columns {absent}; treating them as blank.", file=sys.stderr)
     features = reports.reindex(columns=list(FEATURE_COLUMNS))
 
-    X = model.vectorizer.transform(build_input_text(features))
-    proba = model.clf.predict_proba(X)
-    classes = model.clf.classes_
+    proba = model.predict_proba(build_input_text(features))
+    classes = model.classes_
 
     bucket_p = bucket_probs(proba, classes)
     triage_raw = triage_score(proba, classes)
@@ -117,10 +141,13 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="Score incident reports with the saved severity model.")
     parser.add_argument("input", help="CSV or parquet file of reports")
     parser.add_argument("-o", "--output", required=True, help="where to write scores (.csv or .parquet)")
-    parser.add_argument("--model-dir", default=OUT_DIR, help=f"saved model directory (default {OUT_DIR})")
+    parser.add_argument("--model", choices=MODELS, default="tfidf",
+                        help="which saved model to score with (default tfidf, the production model)")
+    parser.add_argument("--model-dir", default=None,
+                        help=f"saved model directory (default {OUT_DIR} for tfidf, {DEFAULT_DISTILBERT_DIR} for distilbert)")
     args = parser.parse_args(argv)
 
-    model = load_model(args.model_dir)
+    model = load_any_model(args.model, args.model_dir)
     scores = score_reports(read_reports(args.input), model)
     write_scores(scores, args.output)
 

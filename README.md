@@ -120,7 +120,10 @@ python3 predict.py reports.parquet -o scored.csv   # .csv or .parquet in and out
 ```
 
 `predict.py` needs a trained `severity_model/` (run `severity_model.py` once;
-the `.joblib` files aren't committed). The input needs an `event_comments`
+the `.joblib` files aren't committed). To score with the fine-tuned DistilBERT
+instead, add `--model distilbert`; it loads `distilbert_output/grade_len256/final/`,
+which `python3 -m experiments.finetune_distilbert --target grade --max-length 256`
+writes (gitignored; `--model-dir` points elsewhere). The output columns are the same. The input needs an `event_comments`
 column; the intake fields (`Location Name`, `Encounter Service`, age and
 medication columns) are used when present and treated as blank when absent.
 Post-investigation columns such as `manager_comments` can be in the file:
@@ -391,21 +394,24 @@ something from someone else, it says so.
 
 ### Madhura (prediction tool, tests, DistilBERT script)
 
-- [ ] **Let `predict.py` use DistilBERT as well as the current model.** Add an
-      option like `--model distilbert` so we can switch without rewriting
-      anything. This needs DistilBERT to save its trained model in a folder
-      `predict.py` can load.
-- [ ] **Add a `--seed` option to `finetune_distilbert.py`** and run it 2 more
-      times with different seeds. Every result we have is from one run, so
+- [x] **Let `predict.py` use DistilBERT as well as the current model.**
+      `--model distilbert`; `finetune_distilbert.py --target grade` now saves
+      its model, tokenizer, calibrator and September cutoff to `final/`
+      (`distilbert_model.py`). Untested on a real trained model until it's
+      been re-run once with this change.
+- [ ] **Run `finetune_distilbert.py` 2 more times with different `--seed`s.**
+      The option is added (seed 42 is the committed run; others write
+      `..._seed<S>.json`), but the runs still need a GPU. Every result we have is from one run, so
       this shows how much the numbers move by chance. Each run takes about
       40 minutes on a server GPU.
-- [ ] **Fix the test that depends on one example.**
+- [x] **Fix the test that depends on one example.**
       `test_saved_production_model_loads_and_scores` checks that one specific
       report gets flagged, so it can break after any retrain. Check the
       outputs make sense (probabilities add up, the right columns exist)
       instead of one exact answer.
-- [ ] **Add tests for DistilBERT loading and scoring**, like the ones for the
-      current model.
+- [x] **Add tests for DistilBERT loading and scoring**, like the ones for the
+      current model (`tests/test_distilbert.py`, using a tiny random model, so
+      no GPU or download; skipped if torch/transformers aren't installed).
 
 ### Alana (rolling evaluation)
 

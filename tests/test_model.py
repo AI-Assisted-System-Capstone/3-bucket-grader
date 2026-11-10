@@ -135,5 +135,13 @@ def test_saved_production_model_loads_and_scores():
         "Patient found on floor, X-ray confirmed hip fracture, transferred to OR.",
         "Wrong dose drawn up but caught by second nurse before administration.",
     ]), model)
+    # Structure only: which way a given sentence scores changes with every retrain.
+    assert len(out) == 2
+    assert {"grade", "bucket", "p_none", "p_some", "p_serious", "triage_score_raw",
+            "triage_probability", "flagged"} <= set(out.columns)
     np.testing.assert_allclose(out[[f"p_{b}" for b in LABELS]].sum(axis=1), 1.0)
-    assert out.loc[0, "flagged"] and out.loc[0, "bucket"] != "none"
+    assert set(out["grade"]) <= set(FULL_LABELS)
+    assert set(out["bucket"]) <= set(LABELS)
+    assert out["triage_score_raw"].between(0, 1).all()
+    assert out["triage_probability"].between(0, 1).all()
+    assert (out["flagged"] == (out["triage_score_raw"] >= model.cutoff)).all()
