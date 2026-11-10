@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { App } from "./main";
@@ -92,6 +99,7 @@ function resolve(path: string, init?: RequestInit) {
     };
   if (path === "/api/patterns")
     return [pattern("stable", "stable"), pattern("emerging", "emerging")];
+  if (path === "/api/batches") return [];
   if (path.startsWith("/api/events?"))
     return { total: 1, items: [{ ...record, ai }] };
   if (path === "/api/events" && init?.method === "POST") return record;
@@ -342,6 +350,54 @@ describe("analyst UX regression checks", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
+  it("uploads an Excel export locally and opens its saved review batch", async () => {
+    const batch = {
+      id: "test-batch",
+      uploaded_at: "2026-11-09T14:00:00Z",
+      status: "complete",
+      report_count: 1,
+      new_count: 1,
+      counts: { immediate: 1 },
+      fixture_mode: true,
+    };
+    const file = new File(["authored workbook bytes"], "synthetic.xlsx");
+    let uploaded = false;
+    fetchMock.mockImplementation(async (path: string, init?: RequestInit) => {
+      if (path === "/api/batches" && init?.method === "POST") {
+        expect(init.body).toBe(file);
+        uploaded = true;
+        return response(batch, 202);
+      }
+      if (path === "/api/batches") return response(uploaded ? [batch] : []);
+      if (path.startsWith("/api/batches/test-batch?")) {
+        return response({
+          batch,
+          total: 1,
+          items: [{ ...record, ai, batch_tier: "immediate" }],
+        });
+      }
+      return response(resolve(path, init));
+    });
+    open("/worklist");
+    const user = userEvent.setup();
+    await user.click(
+      screen.getByRole("button", { name: "Upload MIDAS export" }),
+    );
+    const input = screen.getByLabelText("Excel export") as HTMLInputElement;
+    await user.upload(input, file);
+    expect(input.files?.[0]).toBe(file);
+    fireEvent.submit(input.form!);
+    await screen.findByText("Immediate 1");
+    expect(
+      (screen.getByLabelText("Upload batch") as HTMLSelectElement).value,
+    ).toBe("test-batch");
+    await user.click(screen.getByRole("link", { name: record.event_id }));
+    await user.click(
+      await screen.findByRole("link", { name: "← Back to batch" }),
+    );
+    await screen.findByText("Immediate 1");
+  });
+
   it("uses a POST body with configurable top N and clears stale search results", async () => {
     open("/search");
     const user = userEvent.setup();
@@ -425,6 +481,44 @@ describe("analyst UX regression checks", () => {
     expect(
       screen.getByText("Inspect grade probabilities").closest("details")?.open,
     ).toBe(false);
+  });
+
+  it("flags a novel event in the worklist and explains it on the report", async () => {
+    const novelAI = {
+      ...ai,
+      novelty: { novel: true, nearest_similarity: 0.61, threshold: 0.75 },
+    };
+    fetchMock.mockImplementation(async (path: string, init?: RequestInit) => {
+      if (path.startsWith("/api/events?"))
+        return response({ total: 1, items: [{ ...record, ai: novelAI }] });
+      if (path.endsWith("/ai")) return response(novelAI);
+      return response(resolve(path, init));
+    });
+    open("/worklist");
+    await screen.findByText("Novel event");
+    cleanup();
+    open("/events/test-event");
+    await screen.findByText(/Nothing in the past year/);
+    expect(screen.getByText(/closest similarity 0\.61, below 0\.75/)).toBeTruthy();
+  });
+
+  it("lists the words that raised and lowered the harm score", async () => {
+    const explained = {
+      ...ai,
+      severity: {
+        ...ai.severity,
+        harm_words: [{ term: "laceration", effect: 0.0157 }],
+        safe_words: [{ term: "bathroom", effect: -0.0022 }],
+      },
+    };
+    fetchMock.mockImplementation(async (path: string, init?: RequestInit) =>
+      response(path.endsWith("/ai") ? explained : resolve(path, init)),
+    );
+    open("/events/test-event");
+    await screen.findByText("Why this score");
+    expect(screen.getByText("laceration")).toBeTruthy();
+    expect(screen.getByText("+1.6 pts")).toBeTruthy();
+    expect(screen.getByText("−0.2 pts")).toBeTruthy();
   });
 
   it("applies similar-report count deliberately instead of on every keystroke", async () => {

@@ -26,9 +26,19 @@ import {
   Search,
   ShieldCheck,
   LoaderCircle,
+  Upload,
   X,
 } from "lucide-react";
-import type { AI, Event, Health, Match, Pattern, Trend } from "./types";
+import type {
+  AI,
+  Batch,
+  Event,
+  Health,
+  Match,
+  Pattern,
+  Trend,
+  WordEffect,
+} from "./types";
 import { Dashboard } from "./Dashboard";
 import "./styles.css";
 
@@ -65,6 +75,13 @@ async function api<T>(path: string, body?: unknown): Promise<T> {
   }
   return response.json() as Promise<T>;
 }
+// The three harm groups, in words a reviewer can read at a glance.
+const BUCKET_NAMES: Record<string, string> = {
+  none: "no harm (A–D)",
+  some: "temporary harm (E–F)",
+  serious: "serious harm (G–I)",
+};
+
 function useLoad<T>(path: string, tick = 0) {
   const [data, setData] = useState<T | null>(null),
     [error, setError] = useState("");
@@ -182,6 +199,43 @@ function Spark({ trend, large = false }: { trend: Trend; large?: boolean }) {
     </div>
   );
 }
+// Top three locations with counts, then how many others.
+function topLocations(counts: Record<string, number> = {}) {
+  const sorted = Object.entries(counts).sort((x, y) => y[1] - x[1]);
+  if (!sorted.length) return "No assigned locations";
+  const shown = sorted.slice(0, 3).map(([name, n]) => `${name} (${n})`);
+  const more = sorted.length - 3;
+  return shown.join(" · ") + (more > 0 ? ` · +${more} more` : "");
+}
+
+// Share of the theme's reports whose suggested grade is E–I (harm).
+function harmShare(grades: Record<string, number> = {}) {
+  const scored = Object.entries(grades).filter(([g]) => g !== "unavailable");
+  const total = scored.reduce((sum, [, n]) => sum + n, 0);
+  if (!total) return "";
+  const harmed = scored
+    .filter(([g]) => ["E", "F", "G", "H", "I"].includes(g))
+    .reduce((sum, [, n]) => sum + n, 0);
+  return `${Math.round((harmed / total) * 100)}% suggested harm (E–I) · ${total} scored`;
+}
+
+// Each word with how many percentage points it moved the harm score.
+function WordList({ words, sign }: { words: WordEffect[]; sign: string }) {
+  return (
+    <ul className="word-list">
+      {words.map((w) => (
+        <li key={w.term}>
+          <span>{w.term}</span>
+          <small>
+            {sign}
+            {Math.abs(w.effect * 100).toFixed(1)} pts
+          </small>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function PatternCard({ pattern }: { pattern: Pattern }) {
   const t = pattern.trend;
   return (
@@ -200,10 +254,10 @@ function PatternCard({ pattern }: { pattern: Pattern }) {
         </Tag>
       </div>
       <h3>{pattern.name}</h3>
-      <p>
-        {Object.keys(pattern.location_distribution).join(" · ") ||
-          "No assigned locations"}
-      </p>
+      <p>{topLocations(pattern.location_distribution)}</p>
+      {harmShare(pattern.severity_distribution) && (
+        <p className="muted">{harmShare(pattern.severity_distribution)}</p>
+      )}
       {t && (
         <>
           <Spark trend={t} />
@@ -226,14 +280,23 @@ function PatternCard({ pattern }: { pattern: Pattern }) {
     </Link>
   );
 }
+const batchTiers = {
+  immediate: "Immediate",
+  secondary: "Secondary",
+  unscored: "Unscored",
+  routine: "Routine",
+} as const;
+
 function EventTable({
   events,
   loading = false,
   error = "",
+  batchId = "",
 }: {
   events: Event[];
   loading?: boolean;
   error?: string;
+  batchId?: string;
 }) {
   if (loading) return <Loading text="Loading reports…" />;
   if (error) return null;
@@ -255,7 +318,7 @@ function EventTable({
             <th>Date / location</th>
             <th>AI event type</th>
             <th>AI severity</th>
-            <th>AI review signal</th>
+            <th>{batchId ? "Batch review tier" : "AI review signal"}</th>
             <th>Analyst review</th>
           </tr>
         </thead>
@@ -266,7 +329,14 @@ function EventTable({
               className={e.ai?.severity?.priority_flag ? "priority-row" : ""}
             >
               <td>
-                <Link className="event-link" to={"/events/" + e.id}>
+                <Link
+                  className="event-link"
+                  to={
+                    "/events/" +
+                    e.id +
+                    (batchId ? `?batch=${encodeURIComponent(batchId)}` : "")
+                  }
+                >
                   {e.event_id}
                   <ChevronRight size={14} />
                 </Link>
@@ -282,14 +352,22 @@ function EventTable({
               <td>
                 {e.ai?.severity ? (
                   <Tag>
-                    Grade {e.ai.severity.grade} · {e.ai.severity.bucket}
+                    Grade {e.ai.severity.grade} ·{" "}
+                    {pct(e.ai.severity.harm_probability_calibrated)} harm
                   </Tag>
                 ) : (
                   "—"
                 )}
               </td>
               <td>
-                {e.ai?.severity?.priority_flag ? (
+                {batchId ? (
+                  <Tag
+                    kind={e.batch_tier === "immediate" ? "watch" : undefined}
+                  >
+                    {e.batch_tier ? batchTiers[e.batch_tier] : "Pending"}
+                    {e.ai?.severity?.fixture ? " · Fixture" : ""}
+                  </Tag>
+                ) : e.ai?.severity?.priority_flag ? (
                   <Tag kind="watch">
                     <AlertTriangle size={13} />
                     {e.ai.severity.fixture
@@ -303,6 +381,7 @@ function EventTable({
                       : e.ai?.status || "Unanalyzed"}
                   </Tag>
                 )}
+                {e.ai?.novelty?.novel && <Tag kind="watch">Novel event</Tag>}
               </td>
               <td>
                 <span className="review-label">
@@ -329,6 +408,7 @@ function EventTable({
 function Worklist() {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
+  const batchId = params.get("batch") || "";
   const filters: Record<string, string> = {
     all: "All reports",
     unreviewed: "Awaiting review",
@@ -344,16 +424,92 @@ function Worklist() {
   );
   const offset = (Math.floor(page) - 1) * 50;
   function paginate(next: number) {
-    setParams({ filter, page: String(next) });
+    setParams(
+      batchId
+        ? { batch: batchId, page: String(next) }
+        : { filter, page: String(next) },
+    );
   }
   const [tick, setTick] = useState(0),
     [show, setShow] = useState(params.get("new") === "1"),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
-  const events = useLoad<{ items: Event[]; total: number }>(
-    `/events?offset=${offset}&limit=50&filter=${filter}`,
+  const [showUpload, setShowUpload] = useState(false),
+    [uploading, setUploading] = useState(false),
+    [retrying, setRetrying] = useState(false);
+  const history = useLoad<Batch[]>("/batches", tick);
+  const events = useLoad<{ items: Event[]; total: number; batch?: Batch }>(
+    batchId
+      ? `/batches/${encodeURIComponent(batchId)}?offset=${offset}&limit=50`
+      : `/events?offset=${offset}&limit=50&filter=${filter}`,
     tick,
   );
+  const batch = events.data?.batch;
+  useEffect(() => {
+    if (batch?.status !== "processing") return;
+    const timer = window.setTimeout(() => setTick((value) => value + 1), 1600);
+    return () => window.clearTimeout(timer);
+  }, [batch]);
+
+  async function upload(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (uploading) return;
+    const input = e.currentTarget.elements.namedItem("workbook");
+    const file =
+      input instanceof HTMLInputElement ? input.files?.[0] : undefined;
+    setError("");
+    if (
+      !(file instanceof File) ||
+      !/\.xlsx$/i.test(file.name) ||
+      !file.size ||
+      file.size > 8 * 1024 * 1024
+    ) {
+      setError("Choose a non-empty Excel .xlsx export no larger than 8 MB.");
+      return;
+    }
+    setUploading(true);
+    try {
+      const response = await fetch("/api/batches", {
+        method: "POST",
+        headers: {
+          "Content-Type":
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        },
+        body: file,
+      });
+      if (!response.ok) {
+        const body = [409, 413, 415, 422].includes(response.status)
+          ? await response.json()
+          : {};
+        throw new Error(
+          typeof body.detail === "string"
+            ? body.detail
+            : "Upload failed. Check the local app and try again.",
+        );
+      }
+      const saved: Batch = await response.json();
+      setShowUpload(false);
+      setParams({ batch: saved.id });
+      setTick((value) => value + 1);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function retryBatch() {
+    setRetrying(true);
+    setError("");
+    try {
+      await api(`/batches/${encodeURIComponent(batchId)}/retry`, {});
+      setTick((value) => value + 1);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setRetrying(false);
+    }
+  }
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (busy) return;
@@ -376,40 +532,163 @@ function Worklist() {
         title="Safety event worklist"
         description="Review the report, consider the suggestions, record your decision."
         action={
-          <button
-            className={show ? "secondary" : ""}
-            disabled={busy}
-            aria-expanded={show}
-            aria-controls="new-report"
-            onClick={() => {
-              setShow(!show);
-              setError("");
-            }}
-          >
-            {show ? <X size={16} /> : <Plus size={16} />}
-            {show ? "Cancel new report" : "New report"}
-          </button>
+          <div className="row">
+            <button
+              disabled={uploading || busy}
+              aria-expanded={showUpload}
+              aria-controls="upload-export"
+              onClick={() => {
+                setShowUpload(!showUpload);
+                setShow(false);
+                setError("");
+              }}
+            >
+              <Upload size={16} />
+              {showUpload ? "Cancel upload" : "Upload MIDAS export"}
+            </button>
+            <button
+              className="secondary"
+              disabled={busy || uploading}
+              aria-expanded={show}
+              aria-controls="new-report"
+              onClick={() => {
+                setShow(!show);
+                setShowUpload(false);
+                setError("");
+              }}
+            >
+              {show ? <X size={16} /> : <Plus size={16} />}
+              {show ? "Cancel new report" : "New report"}
+            </button>
+          </div>
         }
       />
       <ErrorNote text={error || events.error} />
+      {showUpload && (
+        <form
+          id="upload-export"
+          className="panel form report-form"
+          onSubmit={upload}
+          aria-busy={uploading}
+        >
+          <h2>Upload a MIDAS export</h2>
+          <p className="muted">
+            Choose an .xlsx workbook with up to 500 reports on the first sheet.
+            The local app analyzes the reports and saves a timestamped batch.
+          </p>
+          <label>
+            Excel export
+            <input
+              name="workbook"
+              type="file"
+              accept=".xlsx"
+              required
+              disabled={uploading}
+            />
+          </label>
+          <div className="form-actions">
+            <button disabled={uploading}>
+              {uploading ? "Uploading…" : "Upload and analyze"}
+            </button>
+          </div>
+        </form>
+      )}
       <div className="worklist-toolbar">
         <label className="inline">
-          Show reports
+          Upload batch
           <select
-            value={filter}
-            onChange={(e) => setParams({ filter: e.target.value })}
+            value={batchId}
+            onChange={(e) => {
+              setError("");
+              setParams(e.target.value ? { batch: e.target.value } : {});
+            }}
           >
-            {Object.entries(filters).map(([value, label]) => (
-              <option key={value} value={value}>
-                {label}
+            <option value="">Entire worklist</option>
+            {batchId && !history.data?.some((item) => item.id === batchId) && (
+              <option value={batchId}>Selected batch</option>
+            )}
+            {history.data?.map((item) => (
+              <option value={item.id} key={item.id}>
+                {new Date(item.uploaded_at).toLocaleString()} ·{" "}
+                {item.report_count} reports
               </option>
             ))}
           </select>
         </label>
-        <span className="muted">
-          Filters apply to the entire workspace, not just this page.
-        </span>
+        {!batchId && (
+          <>
+            <label className="inline">
+              Show reports
+              <select
+                value={filter}
+                onChange={(e) => setParams({ filter: e.target.value })}
+              >
+                {Object.entries(filters).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <span className="muted">
+              Filters apply to the entire workspace, not just this page.
+            </span>
+          </>
+        )}
       </div>
+      {history.error && (
+        <ErrorNote text="Upload history could not load. Refresh the worklist to retry." />
+      )}
+      {batch && (
+        <section className="panel report-form" aria-label="Batch summary">
+          <h2>Batch uploaded {new Date(batch.uploaded_at).toLocaleString()}</h2>
+          <p>
+            {batch.report_count} reports · {batch.new_count} added to the
+            worklist
+          </p>
+          {batch.fixture_mode && (
+            <Tag kind="watch">Synthetic classifier fixtures</Tag>
+          )}
+          {batch.status === "processing" && (
+            <Loading text="Analyzing this batch…" />
+          )}
+          {batch.status === "complete" && (
+            <>
+              <div className="row" aria-label="Review tier counts">
+                {Object.entries(batchTiers).map(([tier, label]) => (
+                  <Tag
+                    key={tier}
+                    kind={tier === "immediate" ? "watch" : undefined}
+                  >
+                    {label} {batch.counts[tier as keyof typeof batchTiers] ?? 0}
+                  </Tag>
+                ))}
+              </div>
+              <p className="muted">
+                Immediate follows the model’s priority flag. Unflagged grade D
+                or higher is secondary. Lower grades are routine. Unscored
+                reports need manual review.
+              </p>
+            </>
+          )}
+          {(batch.status === "failed" || batch.status === "interrupted") && (
+            <>
+              <p role="status">
+                Batch analysis{" "}
+                {batch.status === "failed" ? "failed" : "was interrupted"}. The
+                imported reports are saved.
+              </p>
+              <button
+                className="secondary"
+                disabled={retrying}
+                onClick={retryBatch}
+              >
+                Retry batch analysis
+              </button>
+            </>
+          )}
+        </section>
+      )}
       {show && (
         <form
           id="new-report"
@@ -480,6 +759,7 @@ function Worklist() {
           events={events.data?.items || []}
           loading={events.loading}
           error={events.error}
+          batchId={batchId}
         />
       )}
       <div className="pagination">
@@ -549,6 +829,8 @@ const grades = ["A", "B1", "B2", "C", "D", "E", "F", "G", "H", "I"],
   codes = ["ADR", "C", "E", "EQ", "FALL", "I", "ME", "O", "SH", "SI", "T"];
 function EventDetail() {
   const { id } = useParams();
+  const [params] = useSearchParams();
+  const batchId = params.get("batch");
   const [tick, setTick] = useState(0),
     [n, setN] = useState(5),
     [requestedN, setRequestedN] = useState("5"),
@@ -598,8 +880,15 @@ function EventDetail() {
   }
   return (
     <>
-      <Link className="back" to="/worklist">
-        ← Back to worklist
+      <Link
+        className="back"
+        to={
+          batchId
+            ? `/worklist?batch=${encodeURIComponent(batchId)}`
+            : "/worklist"
+        }
+      >
+        {batchId ? "← Back to batch" : "← Back to worklist"}
       </Link>
       <Heading
         eyebrow="EVENT REVIEW"
@@ -645,7 +934,10 @@ function EventDetail() {
               <div className="metadata">
                 {[
                   ["Event date", r.event_date],
+                  ["Event time", r.event_time],
+                  ["Date received", r.date_received],
                   ["Location", r.location_name],
+                  ["Location code", r.location_code],
                   ["Service", r.encounter_service],
                   ["Facility", r.facility],
                   ["Age at encounter", r.age_at_encounter?.toString() || ""],
@@ -701,9 +993,18 @@ function EventDetail() {
                 </form>
               </div>
               <p className="muted">
-                Cosine similarity describes text resemblance, not a shared
-                cause.
+                Reports from the year before this one. Cosine similarity
+                describes text resemblance, not a shared cause.
               </p>
+              {a?.novelty?.novel && (
+                <p className="callout">
+                  <Tag kind="watch">Novel event</Tag> Nothing in the past year
+                  closely matches this report (closest similarity{" "}
+                  {a.novelty.nearest_similarity.toFixed(2)}, below{" "}
+                  {a.novelty.threshold.toFixed(2)}). It may be a new kind of
+                  event.
+                </p>
+              )}
               <ErrorNote text={matches.error} />
               {matches.loading && (
                 <Loading text="Finding historical matches…" />
@@ -757,7 +1058,10 @@ function EventDetail() {
                     <strong>{a.severity.grade}</strong>
                     <div>
                       Suggested PSRS grade
-                      <small>{a.severity.bucket} harm bucket</small>
+                      <small>
+                        Most likely group:{" "}
+                        {BUCKET_NAMES[a.severity.bucket] || a.severity.bucket}
+                      </small>
                     </div>
                   </div>
                   {a.severity.fixture && (
@@ -777,6 +1081,23 @@ function EventDetail() {
                       {a.severity.priority_flag ? "Suggested" : "Not flagged"}
                     </dd>
                   </dl>
+                  {!!a.severity.harm_words?.length && (
+                    <div className="why-flagged">
+                      <h3>Why this score</h3>
+                      <p className="muted">
+                        Words in this report that raised the harm score most.
+                        They show what the model weighed, not the cause of
+                        the event.
+                      </p>
+                      <WordList words={a.severity.harm_words} sign="+" />
+                      {!!a.severity.safe_words?.length && (
+                        <>
+                          <p className="muted">Words that lowered it:</p>
+                          <WordList words={a.severity.safe_words} sign="−" />
+                        </>
+                      )}
+                    </div>
+                  )}
                   <details>
                     <summary>Inspect grade probabilities</summary>
                     <Distribution

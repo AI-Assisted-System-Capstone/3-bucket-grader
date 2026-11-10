@@ -26,7 +26,8 @@ class PatternEngineTests(unittest.TestCase):
         df = normalize_schema(raw)
         text = build_report_text(df, include_review_fields=False).iloc[0]
         self.assertIn("Wrong insulin dose", text)
-        self.assertIn("Medication error", text)
+        # Event Type is assigned by a reviewer after submission.
+        self.assertNotIn("Medication error", text)
         self.assertNotIn("Manager says", text)
         self.assertNotIn("I-Harm-Death", text)
 

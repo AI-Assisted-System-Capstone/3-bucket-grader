@@ -18,6 +18,29 @@ New to the project? Start with [PROJECT_GUIDE.md](PROJECT_GUIDE.md): goal,
 status, layout, rules and who owns what. See [PIPELINE.md](PIPELINE.md) for
 diagrams and full per-experiment detail.
 
+## Open the app
+
+You need Python 3.11, Node.js 18+, and the dataset file from the team's shared
+capstone files.
+
+```bash
+git clone https://github.com/AI-Assisted-System-Capstone/3-bucket-grader.git
+cd 3-bucket-grader
+mkdir -p data   # copy LOCAL_ONLY_student_facing_candidate.parquet into data/
+./start_app.sh --demo
+```
+
+Open **http://127.0.0.1:8000** in a browser. The first run sets everything up
+(5–10 minutes) and loads 1,300 reports from the dataset so every page has
+something to show. Later, `./start_app.sh` starts it in seconds. Stop with
+Ctrl-C. Everything runs on your computer; no report leaves it.
+
+Event types appear only if the `11-buckets` repo is cloned next to this folder
+and its model is trained once: put the dataset CSV in `11-buckets/` as
+`LOCAL_ONLY_student_facing_candidate (1).csv`, then run
+`python src/prepare_data.py` and `python src/baseline.py` there (see its
+README). Without it the app still works and shows event type as unavailable.
+
 ## Data
 
 Synthetic MIDAS-style dataset: 80,000 reports, 23 columns. 67,003 are usable
@@ -357,19 +380,28 @@ sponsor's code itself isn't in the repo.
 - [ ] **Cluster drug names.** Medication fields are in the input, but semantic
       grouping of drug names hasn't been built.
 
-### Needs sponsor input
+### Sponsor and team answers
 
-- [ ] **Triage cutoff policy:** 0.236 (misses 2–3 serious cases) or about 0.152
-      (catches all, with about 25 more false alarms per day). This is a
-      staffing and risk decision.
+- [x] **Letter grade or harmed / not harmed?** Both. The app shows the A–I
+      grade and the harm probability side by side ("Grade E · 95.5% harm"),
+      plus the priority flag.
+- [x] **Triage cutoff policy:** reviewers can handle extra reports, so aim to
+      catch every serious case. Choose the cutoff on September or the rolling
+      folds (March–September), never on October.
+- [x] **Is Event Type filled in at intake?** No, a reviewer fills it in
+      later. So it is never a model input, and the `11-buckets` event-type
+      model is useful in the app.
+- [x] **Narrative/label mismatch** (reports that say "no harm noted" but carry
+      a harm grade): the sponsor can't say how common this is in the real
+      data. In the synthetic data it's 529 of 8,326 harmed reports (6.4%).
+      This stays a stated limitation.
+- [x] **Archetype IDs:** not available. We can't check whether the same
+      report templates appear in both training and test months, so test
+      results may be somewhat optimistic. This stays a stated limitation.
+- [ ] **Where to host the test version:** the sponsor doesn't know yet. We
+      propose a host (see the deployment write-up).
 - [ ] **Are the missed serious cases real or label noise?** Raise this at the
       Safety Officer shadowing session.
-- [ ] **Narrative/label mismatch:** the same question at larger scale, for reports
-      that say "no harm noted" but carry a harm grade.
-- [ ] **Archetype IDs**, needed to check template overlap between train and test.
-- [ ] **Is Event Type filled in at intake?** If so, the `11-buckets` 11-way
-      classifier predicts a field that already exists (see end of
-      `PIPELINE.md`).
 
 ## Next steps: who does what
 
@@ -386,10 +418,9 @@ something from someone else, it says so.
 - [ ] **If yes, fix its cutoff on September.** Its recall came in at 94.8%,
       just under our 95% goal. Pick a slightly lower cutoff using September
       only, never October.
-- [ ] **Send the sponsor the head-to-head results** and ask the open
-      questions under "Needs sponsor input" above: which cutoff they want,
-      whether the "quiet" serious cases are real, and whether Event Type is
-      filled in when a report is submitted.
+- [x] **Ask the sponsor the open questions.** Answers are under "Sponsor
+      and team answers" above.
+- [ ] **Send the sponsor the head-to-head results.**
 - [ ] **Keep README and PROJECT_GUIDE.md up to date** as tasks get done.
 
 ### Madhura (prediction tool, tests, DistilBERT script)
@@ -429,10 +460,10 @@ something from someone else, it says so.
 
 ### Rushil (app backend, patterns)
 
-- [ ] **Connect the event-type model.** The app shows "event type
-      unavailable" because the `11-buckets` model isn't plugged in. Work
-      with whoever owns `11-buckets` to load it the same way severity is
-      loaded.
+- [x] **Connect the event-type model.** The app now loads it from
+      `../11-buckets` when that repo is checked out next to this one and its
+      `outputs/baseline/model_seed0.pt` exists (train it with
+      `src/prepare_data.py` then `src/baseline.py` in `11-buckets`).
 - [ ] **Switch the app's severity model to DistilBERT** if we adopt it, once
       Madhura's `predict.py` option exists.
 - [ ] **Check how good the "similar reports" are.** Pick 20 reports, look at
@@ -442,13 +473,12 @@ something from someone else, it says so.
 
 ### Ananya (app frontend, demo)
 
-- [ ] **Load the real synthetic dataset into the app.** Right now the app
-      only has 38 made-up demo reports with placeholder grades. Write a small
-      script that imports reports from the parquet file, so the demo shows
-      real predictions.
-- [ ] **Show why a report was flagged.** On the report page, list the few
-      words that pushed the harm score up most. Rushil can help add this to
-      the backend; the current model already gives these words.
+- [x] **Load the real synthetic dataset into the app.** Rushil's
+      **Upload MIDAS export** button takes an `.xlsx` export (up to 500
+      reports per file), scores every report and ranks them for review.
+- [x] **Show why a report was flagged.** The report page has a "Why this
+      score" box: the words in that report that raised (and lowered) its harm
+      score most, with how many points each moved it.
 - [ ] **Make a short demo walkthrough for the sponsor**: 5–6 screenshots of
       the main pages with one line each on what a reviewer would do there.
 - [ ] **Have someone outside the team try the app** for 10 minutes and write

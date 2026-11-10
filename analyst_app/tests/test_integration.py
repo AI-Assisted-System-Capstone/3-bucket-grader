@@ -2,12 +2,14 @@ import json
 import os
 import tempfile
 import unittest
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
 from fastapi.testclient import TestClient
+from openpyxl import Workbook
 from pydantic import ValidationError
 
 from backend.app import create_app
@@ -161,6 +163,32 @@ class ContractTests(unittest.TestCase):
         service.cutoff = 0.40001
         self.assertFalse(service.predict_event(event()).priority_flag)
 
+    def test_severity_explanation_matches_the_model(self):
+        from scipy.sparse import csr_matrix
+        from sklearn.feature_extraction.text import TfidfVectorizer
+        from sklearn.linear_model import LogisticRegression
+
+        texts = [f"grade{g} word{g} shared" for g in range(10) for _ in range(3)]
+        labels = [g for g in range(10) for _ in range(3)]
+        vectorizer = TfidfVectorizer().fit(texts)
+        model = LogisticRegression(max_iter=2000).fit(vectorizer.transform(texts), labels)
+        service = SeverityService()
+        service.model, service.terms = model, vectorizer.get_feature_names_out()
+
+        def harm_score(x):
+            return model.predict_proba(x)[0][5:].sum()
+
+        row = vectorizer.transform(["word8 shared word1"])
+        up, down = service.explain(row, model.predict_proba(row)[0], harm_score(row))
+        self.assertEqual(up[0]["term"], "word8")  # grade H word raises harm
+        self.assertIn("word1", [w["term"] for w in down])  # grade B1 word lowers it
+        # Effect = value x slope; check the slope against a small nudge.
+        j = list(service.terms).index("word8")
+        nudged = row.toarray()
+        nudged[0, j] += 1e-5
+        slope = (harm_score(csr_matrix(nudged)) - harm_score(row)) / 1e-5
+        self.assertAlmostEqual(up[0]["effect"], row[0, j] * slope, places=3)
+
 
 class PatternTests(unittest.TestCase):
     def test_similarity_sorted_self_and_future_excluded(self):
@@ -176,6 +204,51 @@ class PatternTests(unittest.TestCase):
         self.assertEqual(len(store.search(np.array([1, 0]), 1)), 1)
         with self.assertRaises(ValueError):
             store.search(np.array([1, 0]), 0)
+
+    def test_lookback_window_and_novelty_flag(self):
+        with tempfile.TemporaryDirectory() as folder:
+            settings = Settings(
+                database=str(Path(folder) / "db"),
+                embedding_backend="lexical",
+                similar_lookback_days=365,
+                novelty_min_history=2,
+            )
+            db = Database(settings.database)
+            service = PatternService(settings, db)
+            # No pattern rebuild yet, so there is no cut-off to judge against.
+            self.assertIsNone(service.novelty(np.array([1, 0]), dict(id="x", event_date="2025-06-01")))
+            db.put("pattern_state", "novelty", dict(threshold=0.75))
+            history = [
+                dict(id="old", event_date="2024-01-01", location_name="Synthetic"),
+                dict(id="a", event_date="2025-03-01", location_name="Synthetic"),
+                dict(id="b", event_date="2025-04-01", location_name="Synthetic"),
+            ]
+            service.store.replace(history, [[1, 0], [0.6, 0.8], [0, 1]])
+            report = dict(id="new", event_date="2025-06-01")
+            # More than a year earlier: never offered as a similar report.
+            hits = service.store.search(
+                np.array([1, 0]), 99, before="2025-06-01",
+                after=service.lookback_start("2025-06-01"),
+            )
+            self.assertEqual({h["event_id"] for h in hits}, {"a", "b"})
+            # Nearest report in the past year has similarity 0.6 < 0.75: novel.
+            novelty = service.novelty(np.array([1, 0]), report)
+            self.assertTrue(novelty["novel"])
+            self.assertAlmostEqual(novelty["nearest_similarity"], 0.6, places=5)
+            self.assertFalse(service.novelty(np.array([0, 1]), report)["novel"])
+            # Too little history to judge.
+            settings.novelty_min_history = 3
+            self.assertIsNone(service.novelty(np.array([1, 0]), report))
+            # The cut-off comes from each report's closest match in its past year.
+            settings.novelty_min_history = 1
+            settings.novelty_quantile = 0.5
+            cutoff = service.novelty_cutoff(
+                history + [dict(id="c", event_date="2025-05-01")],
+                [[1, 0], [0.6, 0.8], [0, 1], [0.8, 0.6]],
+            )
+            # Closest earlier match within a year: b->a 0.8, c->a 0.96; a has
+            # none ("old" is over a year earlier). Median = 0.88.
+            self.assertAlmostEqual(cutoff, 0.88, places=5)
 
     def test_multilabel_assignment(self):
         themes = [
@@ -238,6 +311,29 @@ class PatternTests(unittest.TestCase):
                 {t["theme_id"] for t in themes},
             )
 
+    def test_cluster_members_count_and_trend_uses_newest_report(self):
+        with tempfile.TemporaryDirectory() as folder:
+            # A strict threshold that no report reaches: theme counts must
+            # still include the reports that formed each theme.
+            settings = Settings(
+                database=str(Path(folder) / "db"),
+                embedding_backend="lexical",
+                cluster_method="agglomerative",
+                membership_threshold=0.999,
+                cluster_distance=0.2,
+            )
+            db = Database(settings.database)
+            events = synthetic_events()
+            for e in events:
+                db.create_event(e)
+            themes = PatternService(settings, db).rebuild()
+            self.assertTrue(themes)
+            newest = max(e.event_date for e in events)
+            for t in themes:
+                self.assertGreaterEqual(t["event_count"], settings.minimum_cluster_size)
+            for trend in db.all("trend_results"):
+                self.assertEqual(trend["as_of"], newest.isoformat())
+
 
 class APITests(unittest.TestCase):
     def setUp(self):
@@ -260,6 +356,106 @@ class APITests(unittest.TestCase):
         response = self.client.post("/api/events", json=event(identifier).model_dump(mode="json"))
         self.assertEqual(response.status_code, 201)
         return response.json()["id"]
+
+    def upload_workbook(self, identifiers):
+        workbook = Workbook()
+        workbook.active.append(
+            [
+                "Event No.",
+                "Event Date",
+                "Event Time",
+                "Date Received",
+                "Location Name",
+                "Location... Code",
+                "Encounter Service",
+                "Age at Encounter",
+                "ME - Prescribed - Name *... Name",
+                "event_comments",
+                "Significance (PSRS Harm score)",
+                "manager_comments",
+            ]
+        )
+        for index, identifier in enumerate(identifiers, start=1):
+            workbook.active.append(
+                [
+                    identifier,
+                    datetime(2026, 9, index) if index % 2 else f"9/{index}/2026",
+                    "8:05",
+                    "9/12/2026",
+                    "Synthetic unit",
+                    "DEMO",
+                    "Medicine",
+                    58,
+                    "Synthetic drug",
+                    f"Synthetic narrative for the {identifier} scenario.",
+                    "EXCLUDED GRADE",
+                    "EXCLUDED REVIEW",
+                ]
+            )
+        buffer = BytesIO()
+        workbook.save(buffer)
+        return self.client.post(
+            "/api/batches",
+            content=buffer.getvalue(),
+            headers={
+                "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            },
+        )
+
+    def test_excel_batch_ranking_and_history(self):
+        severity = self.app.state.services.severity
+        predict = severity.predict_event
+
+        def score(report):
+            if report.event_id == "UNSCORED":
+                raise RuntimeError("Synthetic model failure")
+            grade = {"ROUTINE": "A", "SECONDARY": "D", "IMMEDIATE": "E"}[report.event_id]
+            return predict(report).model_copy(
+                update={"grade": grade, "priority_flag": grade == "E"}
+            )
+
+        ids = ["IMMEDIATE", "UNSCORED", "SECONDARY", "ROUTINE"]
+        with patch.object(severity, "predict_event", side_effect=score):
+            response = self.upload_workbook(ids)
+        self.assertEqual(response.status_code, 202, response.text)
+        first_id = response.json()["id"]
+        first = self.client.get(f"/api/batches/{first_id}").json()
+        self.assertEqual(
+            first["batch"]["counts"],
+            {tier: 1 for tier in ("immediate", "secondary", "unscored", "routine")},
+        )
+        self.assertEqual(
+            [row["event_id"] for row in first["items"]],
+            ["IMMEDIATE", "SECONDARY", "UNSCORED", "ROUTINE"],
+        )
+        self.assertEqual(first["items"][0]["event_time"], "08:05:00")
+        self.assertEqual(first["items"][0]["date_received"], "2026-09-12")
+        self.assertEqual(first["items"][0]["location_code"], "DEMO")
+        self.assertNotIn("EXCLUDED", json.dumps(first))
+        self.assertEqual(
+            self.client.get("/api/events?limit=1").json()["items"][0]["event_id"], "IMMEDIATE"
+        )
+
+        repeat = self.upload_workbook(ids)
+        self.assertEqual(repeat.status_code, 202, repeat.text)
+        self.assertEqual(repeat.json()["new_count"], 0)
+        self.assertEqual(self.client.get("/api/events").json()["total"], 4)
+        self.assertEqual(self.client.get(f"/api/batches/{first_id}").json(), first)
+        with TestClient(create_app(self.settings)) as restarted:
+            history = restarted.get("/api/batches").json()
+            self.assertEqual([item["id"] for item in history], [repeat.json()["id"], first_id])
+            self.assertEqual(restarted.get(f"/api/batches/{first_id}").json(), first)
+
+    def test_invalid_excel_batch_is_atomic(self):
+        self.assertEqual(self.upload_workbook(["SAME", "SAME"]).status_code, 422)
+        self.assertEqual(self.client.get("/api/batches").json(), [])
+        self.assertEqual(self.client.get("/api/events").json()["total"], 0)
+        self.post("EXISTING")
+        response = self.upload_workbook(["NEW", "EXISTING"])
+        self.assertEqual(response.status_code, 409)
+        self.assertNotIn("EXISTING", response.text)
+        self.assertEqual(self.client.get("/api/events").json()["total"], 1)
+        self.assertEqual(self.client.get("/api/batches").json(), [])
 
     def test_all_required_routes_and_contract(self):
         key = self.post()
@@ -356,6 +552,8 @@ class APITests(unittest.TestCase):
             embedding_backend="lexical",
             severity_repo="",
             severity_artifacts="",
+            event_type_repo="",
+            event_type_artifacts="",
         )
         with TestClient(create_app(settings)) as client:
             r = client.post("/api/events", json=event().model_dump(mode="json"))

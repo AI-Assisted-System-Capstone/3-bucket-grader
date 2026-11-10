@@ -66,7 +66,7 @@ pip install -r requirements.txt
 #   data/LOCAL_ONLY_student_facing_candidate.parquet
 # or set SEVERITY_DATA_PATH=/path/to/file.parquet
 python3 severity_model.py     # trains and saves severity_model/*.joblib (needed by predict.py and the app)
-python3 -m pytest             # 51 tests, no dataset needed
+python3 -m pytest             # 63 tests, no dataset needed
 ```
 
 The analyst app has its own requirements and setup: see
@@ -117,8 +117,12 @@ Working:
 
 - Production severity model, saved and reproducible from the committed code.
 - `predict.py` scores new report files.
-- Analyst app runs locally, using this repo's severity model by default.
-  Pattern themes use local MiniLM embeddings.
+- Analyst app runs locally, using this repo's severity model by default and
+  the `11-buckets` event-type model when that repo sits next to this one.
+  Reviewers upload a MIDAS Excel export; each report gets a suggested grade,
+  event type, similar reports from the past year and a "novel event" flag,
+  and the worklist is ranked for review. Pattern themes use local MiniLM
+  embeddings and show weekly trends and the share of harm in each theme.
 
 Not done yet:
 
@@ -127,8 +131,8 @@ Not done yet:
 - Train DistilBERT more than once, to see how much the numbers move between
   runs. Each run takes about 40 minutes on a server GPU, about 3 hours on a
   laptop.
-- The analyst app's event-type adapter needs the `11-buckets` repo and its
-  trained model, which aren't in this repo.
+- The analyst app's event-type model lives in the `11-buckets` repo, so it
+  has to be trained there once (`src/prepare_data.py`, `src/baseline.py`).
 
 Each person's next tasks are under "Next steps: who does what" at the end
 of [README.md](README.md). The full task list, including questions that need

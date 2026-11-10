@@ -1,4 +1,4 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timezone
 from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -44,6 +44,9 @@ class EventInput(BaseModel):
     suspect_medication: str = Field(default="", max_length=200)
     suspect_dose: str = Field(default="", max_length=100)
     event_date: date
+    event_time: Optional[time] = None
+    date_received: Optional[date] = None
+    location_code: str = Field(default="", max_length=100)
     facility: str = Field(default="", max_length=200)
 
 
@@ -57,6 +60,11 @@ class SeverityResult(BaseModel):
     priority_flag: bool
     model_version: str
     fixture: bool = False
+    # Words in this report that pushed the harm score up / down most:
+    # [{"term": "hemolyzed", "effect": 0.031}, ...]. Effect is the word's share
+    # of the summed E-I probability (local linear estimate), not a cause.
+    harm_words: List[dict] = Field(default_factory=list)
+    safe_words: List[dict] = Field(default_factory=list)
 
 
 class EventTypeResult(BaseModel):
@@ -74,6 +82,8 @@ class AIResult(BaseModel):
     event_type: Optional[EventTypeResult] = None
     themes: List[dict] = Field(default_factory=list)
     similar_events: List[dict] = Field(default_factory=list)
+    # {novel, nearest_similarity, threshold}; None when there is too little history.
+    novelty: Optional[dict] = None
     trend_context: List[dict] = Field(default_factory=list)
     model_versions: Dict[str, str] = Field(default_factory=dict)
     errors: Dict[str, str] = Field(default_factory=dict)
@@ -104,11 +114,26 @@ class EventRecord(EventInput):
     ai: Optional[AIResult] = None
     analyst_decisions: List[dict] = Field(default_factory=list)
     analysis_status: Optional[str] = None
+    batch_tier: Optional[Literal["immediate", "secondary", "routine", "unscored"]] = None
 
 
 class EventList(BaseModel):
     total: int
     items: List[EventRecord]
+
+
+class BatchSummary(BaseModel):
+    id: str
+    uploaded_at: str
+    status: Literal["processing", "complete", "failed", "interrupted"]
+    report_count: int
+    new_count: int
+    counts: Dict[str, int]
+    fixture_mode: bool
+
+
+class BatchWorklist(EventList):
+    batch: BatchSummary
 
 
 class SimilarResult(BaseModel):
