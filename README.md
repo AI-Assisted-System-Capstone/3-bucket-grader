@@ -18,6 +18,29 @@ New to the project? Start with [PROJECT_GUIDE.md](PROJECT_GUIDE.md): goal,
 status, layout, rules and who owns what. See [PIPELINE.md](PIPELINE.md) for
 diagrams and full per-experiment detail.
 
+## Open the app
+
+You need Python 3.11, Node.js 18+, and the dataset file from the team's shared
+capstone files.
+
+```bash
+git clone https://github.com/AI-Assisted-System-Capstone/3-bucket-grader.git
+cd 3-bucket-grader
+mkdir -p data   # copy LOCAL_ONLY_student_facing_candidate.parquet into data/
+./start_app.sh --demo
+```
+
+Open **http://127.0.0.1:8000** in a browser. The first run sets everything up
+(5–10 minutes) and loads 1,300 reports from the dataset so every page has
+something to show. Later, `./start_app.sh` starts it in seconds. Stop with
+Ctrl-C. Everything runs on your computer; no report leaves it.
+
+Event types appear only if the `11-buckets` repo is cloned next to this folder
+and its model is trained once: put the dataset CSV in `11-buckets/` as
+`LOCAL_ONLY_student_facing_candidate (1).csv`, then run
+`python src/prepare_data.py` and `python src/baseline.py` there (see its
+README). Without it the app still works and shows event type as unavailable.
+
 ## Data
 
 Synthetic MIDAS-style dataset: 80,000 reports, 23 columns. 67,003 are usable

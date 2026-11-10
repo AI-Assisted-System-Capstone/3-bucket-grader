@@ -68,7 +68,7 @@ fi
 # 5. Optional: the event-type model from the 11-buckets repo
 if [[ ! -f ../11-buckets/outputs/baseline/model_seed0.pt ]]; then
   echo "Note: event types will show as unavailable. To turn them on, clone 11-buckets"
-  echo "next to this folder and train it (see README, 'Analyst app')."
+  echo "next to this folder and train it (see README, 'Open the app')."
 fi
 
 export MIDAS_PYTHON="$ROOT/.venv/bin/python"
