@@ -77,6 +77,8 @@ class AIResult(BaseModel):
     event_type: Optional[EventTypeResult] = None
     themes: List[dict] = Field(default_factory=list)
     similar_events: List[dict] = Field(default_factory=list)
+    # {novel, nearest_similarity, threshold}; None when there is too little history.
+    novelty: Optional[dict] = None
     trend_context: List[dict] = Field(default_factory=list)
     model_versions: Dict[str, str] = Field(default_factory=dict)
     errors: Dict[str, str] = Field(default_factory=dict)

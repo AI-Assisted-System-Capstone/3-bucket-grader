@@ -179,6 +179,51 @@ class PatternTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             store.search(np.array([1, 0]), 0)
 
+    def test_lookback_window_and_novelty_flag(self):
+        with tempfile.TemporaryDirectory() as folder:
+            settings = Settings(
+                database=str(Path(folder) / "db"),
+                embedding_backend="lexical",
+                similar_lookback_days=365,
+                novelty_min_history=2,
+            )
+            db = Database(settings.database)
+            service = PatternService(settings, db)
+            # No pattern rebuild yet, so there is no cut-off to judge against.
+            self.assertIsNone(service.novelty(np.array([1, 0]), dict(id="x", event_date="2025-06-01")))
+            db.put("pattern_state", "novelty", dict(threshold=0.75))
+            history = [
+                dict(id="old", event_date="2024-01-01", location_name="Synthetic"),
+                dict(id="a", event_date="2025-03-01", location_name="Synthetic"),
+                dict(id="b", event_date="2025-04-01", location_name="Synthetic"),
+            ]
+            service.store.replace(history, [[1, 0], [0.6, 0.8], [0, 1]])
+            report = dict(id="new", event_date="2025-06-01")
+            # More than a year earlier: never offered as a similar report.
+            hits = service.store.search(
+                np.array([1, 0]), 99, before="2025-06-01",
+                after=service.lookback_start("2025-06-01"),
+            )
+            self.assertEqual({h["event_id"] for h in hits}, {"a", "b"})
+            # Nearest report in the past year has similarity 0.6 < 0.75: novel.
+            novelty = service.novelty(np.array([1, 0]), report)
+            self.assertTrue(novelty["novel"])
+            self.assertAlmostEqual(novelty["nearest_similarity"], 0.6, places=5)
+            self.assertFalse(service.novelty(np.array([0, 1]), report)["novel"])
+            # Too little history to judge.
+            settings.novelty_min_history = 3
+            self.assertIsNone(service.novelty(np.array([1, 0]), report))
+            # The cut-off comes from each report's closest match in its past year.
+            settings.novelty_min_history = 1
+            settings.novelty_quantile = 0.5
+            cutoff = service.novelty_cutoff(
+                history + [dict(id="c", event_date="2025-05-01")],
+                [[1, 0], [0.6, 0.8], [0, 1], [0.8, 0.6]],
+            )
+            # Closest earlier match within a year: b->a 0.8, c->a 0.96; a has
+            # none ("old" is over a year earlier). Median = 0.88.
+            self.assertAlmostEqual(cutoff, 0.88, places=5)
+
     def test_multilabel_assignment(self):
         themes = [
             dict(theme_id="one", name="Scanner", centroid=[1, 0]),
@@ -239,6 +284,29 @@ class PatternTests(unittest.TestCase):
                 {t["theme_id"] for t in restarted.rebuild()},
                 {t["theme_id"] for t in themes},
             )
+
+    def test_cluster_members_count_and_trend_uses_newest_report(self):
+        with tempfile.TemporaryDirectory() as folder:
+            # A strict threshold that no report reaches: theme counts must
+            # still include the reports that formed each theme.
+            settings = Settings(
+                database=str(Path(folder) / "db"),
+                embedding_backend="lexical",
+                cluster_method="agglomerative",
+                membership_threshold=0.999,
+                cluster_distance=0.2,
+            )
+            db = Database(settings.database)
+            events = synthetic_events()
+            for e in events:
+                db.create_event(e)
+            themes = PatternService(settings, db).rebuild()
+            self.assertTrue(themes)
+            newest = max(e.event_date for e in events)
+            for t in themes:
+                self.assertGreaterEqual(t["event_count"], settings.minimum_cluster_size)
+            for trend in db.all("trend_results"):
+                self.assertEqual(trend["as_of"], newest.isoformat())
 
 
 class APITests(unittest.TestCase):
@@ -458,6 +526,8 @@ class APITests(unittest.TestCase):
             embedding_backend="lexical",
             severity_repo="",
             severity_artifacts="",
+            event_type_repo="",
+            event_type_artifacts="",
         )
         with TestClient(create_app(settings)) as client:
             r = client.post("/api/events", json=event().model_dump(mode="json"))

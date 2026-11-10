@@ -5,7 +5,7 @@ from typing import Protocol
 
 import numpy as np
 from sklearn.cluster import AgglomerativeClustering
-from sklearn.feature_extraction.text import HashingVectorizer, TfidfVectorizer
+from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS, HashingVectorizer, TfidfVectorizer
 from sklearn.preprocessing import normalize
 
 from .contracts import EventInput, normalized_text, now
@@ -28,7 +28,7 @@ class CosineStore:
             normalize(np.asarray(vectors, dtype=np.float32)) if len(vectors) else np.empty((0, 384))
         )
 
-    def search(self, vector, top_n, before=None, exclude=None):
+    def search(self, vector, top_n, before=None, exclude=None, after=None):
         if top_n < 1:
             raise ValueError("top_n must be positive")
         if not self.records:
@@ -38,7 +38,9 @@ class CosineStore:
         eligible = [
             i
             for i, r in enumerate(self.records)
-            if r["id"] != exclude and (before is None or r["event_date"] < before)
+            if r["id"] != exclude
+            and (before is None or r["event_date"] < before)
+            and (after is None or r["event_date"] >= after)
         ]
         # Stable secondary key makes ties reproducible. Strictly earlier dates avoid
         # claiming same-day events are historical when only a date is available.
@@ -100,9 +102,19 @@ class ThemeNamer(Protocol):
     def name(self, texts: list) -> dict: ...
 
 
+# Words that appear in nearly every report and say nothing about the theme.
+REPORT_STOP_WORDS = sorted(
+    ENGLISH_STOP_WORDS
+    | {"patient", "patients", "pt", "pts", "noted", "harm", "occurred", "event", "staff",
+       "room", "unit", "reported", "report", "pm", "am"}
+)
+
+
 class KeywordNamer:
     def name(self, texts):
-        vectorizer = TfidfVectorizer(stop_words="english", ngram_range=(1, 2), max_features=2000)
+        vectorizer = TfidfVectorizer(
+            stop_words=REPORT_STOP_WORDS, ngram_range=(1, 2), max_features=2000
+        )
         try:
             matrix = vectorizer.fit_transform(texts)
             scores = np.asarray(matrix.mean(axis=0)).ravel()
@@ -125,6 +137,8 @@ def memberships_for(vector, themes, threshold):
 
 
 def weekly_trend(theme_id, dates, settings, as_of=None):
+    # rebuild() passes the newest report date so imported historical exports
+    # still show a trend; today's date is only the fallback.
     as_of = as_of or date.today()
     # Compare complete weeks to complete weeks; never a partial current week.
     week = as_of - timedelta(days=as_of.weekday() + 7)
@@ -203,6 +217,57 @@ class PatternService:
         )
         return vector
 
+    def lookback_start(self, event_date):
+        start = date.fromisoformat(str(event_date)) - timedelta(days=self.settings.similar_lookback_days)
+        return start.isoformat()
+
+    def novelty_cutoff(self, records, vectors):
+        """Similarity below which a report counts as novel.
+
+        For every report with enough history, find its closest report from the
+        year before it; the cut-off is the novelty_quantile of those values.
+        """
+        if not len(records):
+            return None
+        vectors = normalize(np.asarray(vectors, dtype=np.float32))
+        days = np.array([date.fromisoformat(r["event_date"]).toordinal() for r in records])
+        lookback = self.settings.similar_lookback_days
+        nearest = []
+        for start in range(0, len(records), 1000):
+            rows = slice(start, start + 1000)
+            sims = vectors[rows] @ vectors.T
+            earlier = (days[None, :] < days[rows, None]) & (
+                days[None, :] >= days[rows, None] - lookback
+            )
+            enough = earlier.sum(axis=1) >= self.settings.novelty_min_history
+            sims = np.where(earlier, sims, -np.inf).max(axis=1)
+            nearest.extend(sims[enough].tolist())
+        if not nearest:
+            return None
+        return float(np.quantile(nearest, self.settings.novelty_quantile))
+
+    def novelty(self, vector, record):
+        """Is anything in the past year close to this report?
+
+        None until a pattern rebuild has set the cut-off, or when the report
+        has too little history to judge.
+        """
+        state = self.db.get("pattern_state", "novelty") or {}
+        threshold = state.get("threshold")
+        if threshold is None:
+            return None
+        history = self.store.search(
+            vector,
+            self.settings.novelty_min_history,
+            before=record["event_date"],
+            exclude=record["id"],
+            after=self.lookback_start(record["event_date"]),
+        )
+        if len(history) < self.settings.novelty_min_history:
+            return None
+        nearest = history[0]["similarity"]
+        return dict(novel=nearest < threshold, nearest_similarity=nearest, threshold=threshold)
+
     def analyze(self, record, top_n=None):
         vector = self.embed(record)
         self.refresh()
@@ -211,7 +276,9 @@ class PatternService:
             top_n or self.settings.top_n,
             before=record["event_date"],
             exclude=record["id"],
+            after=self.lookback_start(record["event_date"]),
         )
+        novelty = self.novelty(vector, record)
         themes = memberships_for(vector, self.db.all("themes"), self.settings.membership_threshold)
         self.db.set_memberships(record["id"], themes)
         self.db.put(
@@ -220,11 +287,12 @@ class PatternService:
             dict(
                 event_id=record["id"],
                 matches=similar,
+                novelty=novelty,
                 model_version=self.version,
                 created_at=now(),
             ),
         )
-        return similar, themes
+        return similar, themes, novelty
 
     def search(self, query, top_n):
         # Queries use the same narrative-only form of the normalized intake representation.
@@ -238,6 +306,11 @@ class PatternService:
             )
         vectors = np.array([self.embed(r) for r in records])
         self.refresh()
+        self.db.put(
+            "pattern_state",
+            "novelty",
+            dict(threshold=self.novelty_cutoff(records, vectors), created_at=now()),
+        )
         if len(records) < self.settings.minimum_cluster_size:
             self.db.replace_patterns([], [], [])
             return []
@@ -262,7 +335,7 @@ class PatternService:
             ).fit_predict(vectors)
         elif method != "hdbscan":
             raise ValueError("Unsupported cluster method")
-        themes = []
+        themes, theme_labels = [], []
         for label in sorted(set(labels) - {-1}):
             indices = np.flatnonzero(labels == label)
             if len(indices) < self.settings.minimum_cluster_size:
@@ -284,12 +357,25 @@ class PatternService:
                     created_at=now(),
                 )
             )
-        memberships = [
-            dict(event_id=r["id"], **m)
-            for r, vector in zip(records, vectors)
-            for m in memberships_for(vector, themes, self.settings.membership_threshold)
-        ]
+            theme_labels.append(label)
+        # The reports that formed a theme always belong to it; other reports
+        # join any theme they are close enough to (multi-label).
+        cluster_of = {}
+        for theme, label in zip(themes, theme_labels):
+            for i in np.flatnonzero(labels == label):
+                cluster_of[records[i]["id"]] = theme
+        memberships = []
+        for r, vector in zip(records, vectors):
+            found = memberships_for(vector, themes, self.settings.membership_threshold)
+            own = cluster_of.get(r["id"])
+            if own and own["theme_id"] not in {m["theme_id"] for m in found}:
+                score = float(np.clip(np.dot(vector, own["centroid"]), -1, 1))
+                found.append(
+                    dict(theme_id=own["theme_id"], label=own["name"], membership_score=score)
+                )
+            memberships += [dict(event_id=r["id"], **m) for m in found]
         ai = {result["event_id"]: result for result in self.db.all("ai_results")}
+        as_of = as_of or max(date.fromisoformat(r["event_date"]) for r in records)
         trends = []
         for theme in themes:
             member_ids = {m["event_id"] for m in memberships if m["theme_id"] == theme["theme_id"]}

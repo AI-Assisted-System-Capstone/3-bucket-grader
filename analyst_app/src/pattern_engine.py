@@ -154,9 +154,8 @@ def build_report_text(df: pd.DataFrame, include_review_fields: bool = False) -> 
         if narrative:
             parts.append(narrative)
 
-        event_type = str(row.get("event_type", "") or "").strip()
-        if event_type:
-            parts.append(f"Event type: {event_type}")
+        # Event Type is filled in by a reviewer after submission, so it is not
+        # part of the similarity text.
 
         med_bits = []
         for label, field in [

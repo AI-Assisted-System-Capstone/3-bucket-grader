@@ -21,6 +21,7 @@ TABLES = (
     "analyst_feedback",
     "audit_log",
     "import_batches",
+    "pattern_state",
 )
 
 
@@ -59,6 +60,8 @@ class Database:
                     id TEXT PRIMARY KEY, event_id TEXT REFERENCES events(id), payload TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS audit_log (id TEXT PRIMARY KEY, payload TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS import_batches (
+                    id TEXT PRIMARY KEY, payload TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS pattern_state (
                     id TEXT PRIMARY KEY, payload TEXT NOT NULL);
             """)
         Path(path).chmod(0o600)

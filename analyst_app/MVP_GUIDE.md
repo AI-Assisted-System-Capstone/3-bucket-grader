@@ -52,6 +52,10 @@ required. The importer reads supported intake fields and excludes existing grade
 event-type labels, and analyst review fields. Choose an earlier upload from the
 **Upload batch** list to see its saved ranking and upload timestamp.
 
+After the first upload, open **Patterns & trends** and rebuild patterns once.
+That builds the themes and sets the "Novel event" cut-off from the reports
+loaded so far; reports uploaded after that are checked for novelty.
+
 Immediate follows the severity model’s priority flag. Unflagged suggested grades
 D and higher are secondary. Lower grades are routine. Reports without a severity
 result appear as unscored. Repeated identical reports share one worklist record,
@@ -149,14 +153,17 @@ in your shell. Paths may be absolute or relative to the repo root.
 | MIDAS_FIXTURE_MODE | false; true explicitly enables synthetic classifier fixtures |
 | MIDAS_SEVERITY_REPO | this repo (the folder above analyst_app/) by default |
 | MIDAS_SEVERITY_ARTIFACTS | its severity_model/ by default; run `python3 severity_model.py` there first |
-| MIDAS_EVENT_TYPE_REPO | local 11-buckets checkout path |
-| MIDAS_EVENT_TYPE_ARTIFACTS | its trusted outputs/baseline directory |
+| MIDAS_EVENT_TYPE_REPO | ../11-buckets next to this repo if it exists, else unset |
+| MIDAS_EVENT_TYPE_ARTIFACTS | its outputs/baseline directory (needs model_seed0.pt from `src/baseline.py`) |
 | MIDAS_EMBEDDING_BACKEND | minilm; lexical only for smoke tests |
 | MIDAS_TOP_N | 5; stored similar-case count, 1–10000 |
-| MIDAS_MEMBERSHIP_THRESHOLD | 0.80; per-theme cosine threshold, needs reviewer validation |
-| MIDAS_CLUSTER_METHOD | hdbscan; agglomerative also supported |
+| MIDAS_MEMBERSHIP_THRESHOLD | 0.75; per-theme cosine threshold, needs reviewer validation |
+| MIDAS_CLUSTER_METHOD | agglomerative; hdbscan also supported (it merged most reports into one theme on our data) |
 | MIDAS_MINIMUM_CLUSTER_SIZE | 3; clusters below this support are excluded |
-| MIDAS_CLUSTER_DISTANCE | 0.40; agglomerative cosine distance threshold |
+| MIDAS_CLUSTER_DISTANCE | 0.50; agglomerative cosine distance threshold |
+| MIDAS_SIMILAR_LOOKBACK_DAYS | 365; similar reports and novelty only look at the year before a report |
+| MIDAS_NOVELTY_QUANTILE | 0.05; about this share of reports is flagged "Novel event"; cut-off is reset on each pattern rebuild |
+| MIDAS_NOVELTY_MIN_HISTORY | 200; reports with fewer earlier reports in the window are not judged |
 | MIDAS_MINIMUM_EVENT_COUNT | 3; minimum current-week support |
 | MIDAS_MINIMUM_PERCENT_INCREASE | 50; increase vs weekly baseline |
 | MIDAS_Z_SCORE_THRESHOLD | 2 |

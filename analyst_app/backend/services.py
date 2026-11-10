@@ -112,7 +112,9 @@ class Services:
                     result.errors[name] = type(exc).__name__ + ": analysis unavailable"
             result.model_versions["pattern"] = self.pattern.version
             try:
-                result.similar_events, result.themes = self.pattern.analyze(record)
+                result.similar_events, result.themes, result.novelty = self.pattern.analyze(
+                    record
+                )
             except Exception as exc:
                 result.errors["pattern"] = type(exc).__name__ + ": analysis unavailable"
             result.status = (
@@ -154,6 +156,7 @@ class Services:
                         "event_id",
                         "severity",
                         "event_type",
+                        "novelty",
                         "status",
                         "model_versions",
                         "errors",

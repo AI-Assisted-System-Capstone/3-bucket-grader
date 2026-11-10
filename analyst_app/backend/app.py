@@ -239,7 +239,13 @@ def create_app(settings=None, encoder=None):
                 raise HTTPException(409, "Report embedding pending; queue analysis first")
             vector = stored["vector"]
             pattern.refresh()
-            return pattern.store.search(vector, top_n, before=record["event_date"], exclude=key)
+            return pattern.store.search(
+                vector,
+                top_n,
+                before=record["event_date"],
+                exclude=key,
+                after=pattern.lookback_start(record["event_date"]),
+            )
 
     @app.post("/api/search", response_model=List[SimilarResult])
     def search(data: SearchRequest):
